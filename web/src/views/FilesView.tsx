@@ -1,6 +1,6 @@
-// 职责：文件视图 —— 项目工作区文件树（活状态现取）+ 文件内容预览（P2：读取接口已开）。
-// 树：GET /api/projects/:pid/files（服务端安全过滤）；预览：GET /api/projects/:pid/files/read?path=（工作区内防穿越）。
-// 文本用 CodeBlock（行号 + diff 识别）；二进制/超大文件给提示。
+// Responsibility: files view —— project workspace file tree (live state fetched on demand) + file content preview (P2: the read endpoint is available).
+// Tree: GET /api/projects/:pid/files (server-side safety filtering); preview: GET /api/projects/:pid/files/read?path= (traversal-protected within the workspace).
+// Text uses CodeBlock (line numbers + diff detection); binary / oversized files get a notice.
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/icons';
 import { LoadingState } from '../components/LoadingState';
@@ -25,7 +25,7 @@ export function FilesView({ pid }: { pid: string }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [pLoading, setPLoading] = useState(false);
   const [pErr, setPErr] = useState('');
-  // 折叠的目录路径集合（点目录切换展开/折叠）
+  // Set of collapsed directory paths (clicking a directory toggles expand/collapse)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -48,7 +48,7 @@ export function FilesView({ pid }: { pid: string }) {
       const r = await fetch(`/api/projects/${encodeURIComponent(pid)}/files/read?path=${encodeURIComponent(path)}`);
       if (!r.ok) {
         const body = await r.text().catch(() => '');
-        throw new Error(body.slice(0, 120) || `读取失败 (${r.status})`);
+        throw new Error(body.slice(0, 120) || `Read failed (${r.status})`);
       }
       setPreview((await r.json()) as Preview);
     } catch (e) {
@@ -67,7 +67,7 @@ export function FilesView({ pid }: { pid: string }) {
           className={'fx-node ' + n.type + (sel === path ? ' sel' : '')}
           onClick={() => {
             if (isDir) {
-              // 目录：切换展开/折叠
+              // Directory: toggle expand/collapse
               setCollapsed((prev) => {
                 const next = new Set(prev);
                 if (next.has(path)) next.delete(path); else next.add(path);
@@ -107,45 +107,45 @@ export function FilesView({ pid }: { pid: string }) {
       <div className="fx-side">
         <div className="fx-tree">
           {loading ? (
-            <div className="empty-state"><LoadingState variant="dots" label="加载文件树…" /></div>
+            <div className="empty-state"><LoadingState variant="dots" label="Loading file tree…" /></div>
           ) : tree ? renderNode(tree, '') : (
             <div className="empty-state">
               <Icon name="folder" />
-              <div className="t">文件树不可用</div>
-              <div className="d">工作区读取失败（目录不存在或不可读）</div>
+              <div className="t">File tree unavailable</div>
+              <div className="d">Failed to read the workspace (the directory does not exist or is unreadable)</div>
             </div>
           )}
         </div>
       </div>
       <div className="fx-main">
         {pLoading ? (
-          <div className="empty-state"><LoadingState label="读取文件…" /></div>
+          <div className="empty-state"><LoadingState label="Reading file…" /></div>
         ) : pErr ? (
           <div className="empty-state">
             <Icon name="warn" />
-            <div className="t">读取失败</div>
+            <div className="t">Read failed</div>
             <div className="d">{pErr}</div>
           </div>
         ) : preview ? (
           <>
             <div className="fname">
               {preview.name}
-              <span className="muted" style={{ marginLeft: 10 }}>{preview.size.toLocaleString()} B{preview.truncated ? ' · 超出 256KB 已截断' : ''}</span>
+              <span className="muted" style={{ marginLeft: 10 }}>{preview.size.toLocaleString()} B{preview.truncated ? ' · larger than 256KB, truncated' : ''}</span>
             </div>
             <div className="fmeta">{preview.path}</div>
             {preview.binary ? (
-              <div className="note" style={{ marginTop: 12 }}>二进制文件（内容不预览）</div>
+              <div className="note" style={{ marginTop: 12 }}>Binary file (no content preview)</div>
             ) : preview.content ? (
               renderBody()
             ) : (
-              <div className="note" style={{ marginTop: 12 }}>{preview.truncated ? '文件过大，未读取内容' : '空文件'}</div>
+              <div className="note" style={{ marginTop: 12 }}>{preview.truncated ? 'File too large; content not read' : 'Empty file'}</div>
             )}
           </>
         ) : (
           <div className="empty-state">
             <Icon name="folder" />
-            <div className="t">未选择文件</div>
-            <div className="d">从左侧选择文件，查看内容预览</div>
+            <div className="t">No file selected</div>
+            <div className="d">Pick a file on the left to preview its content</div>
           </div>
         )}
       </div>

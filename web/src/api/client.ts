@@ -1,6 +1,6 @@
-// 职责：REST 封装 —— 真实接口（契约见 docs/frontend-design-v1.md §3.1，形状以服务为准）。
-// M2.3：资产卡两层 —— 卡（O1=B，1 卡 N 执行）为主资源；执行 = 会话（按 sid 操作）。
-// 走 Vite dev proxy（/api → 127.0.0.1:3081，服务无 CORS 头，必须同源代理）。
+// Responsibility: REST wrapper —— real endpoints (contract in docs/frontend-design-v1.md §3.1; the service is the source of truth for shapes).
+// M2.3: two-layer asset cards —— the card (O1=B, 1 card N executions) is the main resource; execution = session (operated on by sid).
+// Goes through the Vite dev proxy (/api → 127.0.0.1:3081; the service sends no CORS headers, so a same-origin proxy is required).
 import type { Project, TaskState } from '../store/projection';
 
 const BASE = '/api';
@@ -21,17 +21,17 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** GET /api/projects —— 项目列表 [{id,name,path,card_count,counts}] */
+/** GET /api/projects —— project list [{id,name,path,card_count,counts}] */
 export function listProjects(): Promise<Project[]> {
   return req<Project[]>('/projects');
 }
 
-/** GET /api/projects/:pid —— 项目详情 {id,name,path,cards:{<cardId>:CardState}}（cards 是字典） */
+/** GET /api/projects/:pid —— project detail {id,name,path,cards:{<cardId>:CardState}} (cards is a dictionary) */
 export async function getProject(pid: string): Promise<{ id: string; name: string; path: string; cards: Record<string, CardState> }> {
   return req('/projects/' + encodeURIComponent(pid));
 }
 
-/** GET /api/projects/:pid/cards —— 卡列表（轻量：最新执行状态 + 里程碑 + 执行次数） */
+/** GET /api/projects/:pid/cards —— card list (lightweight: latest execution status + milestone + execution count) */
 export interface CardSummary {
   id: string;
   title: string;
@@ -52,15 +52,15 @@ export function listCards(pid: string): Promise<CardSummary[]> {
   return req<CardSummary[]>('/projects/' + encodeURIComponent(pid) + '/cards');
 }
 
-/** GET /api/cards/:cardId —— 卡详情（全部执行代次，executions 字典键 = 会话 id） */
+/** GET /api/cards/:cardId —— card detail (all execution generations; executions dictionary key = session id) */
 export interface CardDetail {
   id: string;
   title: string;
   description: string;
   kind: string;
   milestone?: string | null;
-  deps?: string[];          // 依赖契约：完成本卡前需先完成的卡 id
-  criteria?: string | null; // 需求契约：验收标准（D1.7 校准批准后写回）
+  deps?: string[];          // dependency contract: ids of cards that must be completed before this one
+  criteria?: string | null; // requirement contract: acceptance criteria (written back after D1.7 calibration is approved)
   created_at?: number;
   execution_count: number;
   project_id?: string;
@@ -71,16 +71,16 @@ export function getCard(cardId: string): Promise<CardDetail> {
   return req<CardDetail>('/cards/' + encodeURIComponent(cardId));
 }
 
-/** POST /api/projects/:pid/cards —— 建卡（资产）+ 首代执行（建卡即自动跑）；201 {card_id, session_id} */
+/** POST /api/projects/:pid/cards —— create a card (asset) + first-generation execution (a new card runs automatically); 201 {card_id, session_id} */
 export interface CreateCardInput {
   title: string;
   description?: string;
   kind?: string; // 'requirement' | 'bug' | 'task'
   milestone?: string;
-  preset?: string; // agent preset id（每任务工具/人格组装）
-  deps?: string[]; // 依赖契约：同项目已存在卡的 id（完成本卡前需先完成）
-  calibrate?: boolean; // D1.6 时机①：先校准需求（AI 提案验收标准 → 确认 → 写回）再执行
-  budget?: number; // 执行预算 ¥（opt-in，Waiting{cost} 超支挂起）
+  preset?: string; // agent preset id (per-task tool/persona assembly)
+  deps?: string[]; // dependency contract: ids of existing cards in the same project (must be completed before this one)
+  calibrate?: boolean; // D1.6 moment ①: calibrate the requirement first (AI proposes acceptance criteria → confirm → write back), then execute
+  budget?: number; // execution budget in CNY (opt-in; Waiting{cost} suspends on overspend)
 }
 export async function createCard(pid: string, input: CreateCardInput): Promise<{ card_id: string; session_id: string }> {
   const res = await fetch(BASE + '/projects/' + encodeURIComponent(pid) + '/cards', {
@@ -95,7 +95,7 @@ export async function createCard(pid: string, input: CreateCardInput): Promise<{
   return (await res.json()) as { card_id: string; session_id: string };
 }
 
-/** POST /api/cards/:cardId/status —— 手动标记状态（设计状态机：拖拽/手动标记完成/失败/待办） */
+/** POST /api/cards/:cardId/status —— mark status manually (state machine design: drag / manually mark done / failed / to-do) */
 export async function markStatus(cardId: string, status: 'Done' | 'Failed' | 'Pending'): Promise<boolean> {
   const res = await fetch(BASE + '/cards/' + encodeURIComponent(cardId) + '/status', {
     method: 'POST',
@@ -105,8 +105,8 @@ export async function markStatus(cardId: string, status: 'Done' | 'Failed' | 'Pe
   return res.ok;
 }
 
-/** POST /api/cards/:cardId/executions —— 卡上起新执行代次（fork：from_execution_id 派生）；
- *  新会话 = 新执行，原执行事件流保留供 diff。 */
+/** POST /api/cards/:cardId/executions —— start a new execution generation on a card (fork: derived from from_execution_id);
+ *  new session = new execution; the original execution's event stream is kept for diffing. */
 export async function forkExecution(cardId: string, fromExecutionId?: string): Promise<{ session_id: string; forked_from?: string | null }> {
   const res = await fetch(BASE + '/cards/' + encodeURIComponent(cardId) + '/executions', {
     method: 'POST',
@@ -120,7 +120,7 @@ export async function forkExecution(cardId: string, fromExecutionId?: string): P
   return (await res.json()) as { session_id: string; forked_from?: string | null };
 }
 
-/** POST /api/cards/:cardId/calibrate —— D1.7 需求校准（AI 探索提案验收标准 → 确认 → 写回） */
+/** POST /api/cards/:cardId/calibrate —— D1.7 requirement calibration (AI explores and proposes acceptance criteria → confirm → write back) */
 export async function calibrateCard(cardId: string): Promise<{ session_id: string }> {
   const res = await fetch(BASE + '/cards/' + encodeURIComponent(cardId) + '/calibrate', {
     method: 'POST',
@@ -134,13 +134,13 @@ export async function calibrateCard(cardId: string): Promise<{ session_id: strin
   return (await res.json()) as { session_id: string };
 }
 
-/** GET /api/tasks/:sid —— 单次执行（= 会话）TaskState（按 sid，不是卡 id） */
+/** GET /api/tasks/:sid —— TaskState of a single execution (= session) (by sid, not card id) */
 export function getTask(sid: string): Promise<TaskState> {
   return req<TaskState>('/tasks/' + encodeURIComponent(sid));
 }
 
-/** POST /api/tasks/:sid/comments —— 评论 = 唯一控制通道（评论即控制：指示/引导/批复）；
- *  服务端经 ACP session/prompt 发给引擎，WS user/message + assistant/message 回流评论线程。 */
+/** POST /api/tasks/:sid/comments —— comments = the only control channel (comments are control: instructions / guidance / decisions);
+ *  the server sends it to the engine via ACP session/prompt; WS user/message + assistant/message flow back into the comment thread. */
 export async function postComment(sid: string, text: string): Promise<boolean> {
   const res = await fetch(BASE + '/tasks/' + encodeURIComponent(sid) + '/comments', {
     method: 'POST',
@@ -152,7 +152,7 @@ export async function postComment(sid: string, text: string): Promise<boolean> {
   return data.ok === true;
 }
 
-/** POST /api/tasks/:sid/cancel —— 停止；{ok:true} */
+/** POST /api/tasks/:sid/cancel —— stop; {ok:true} */
 export async function cancelTask(sid: string): Promise<boolean> {
   const res = await fetch(BASE + '/tasks/' + encodeURIComponent(sid) + '/cancel', { method: 'POST' });
   if (!res.ok) throw new Error('cancel ' + res.status);
@@ -160,14 +160,14 @@ export async function cancelTask(sid: string): Promise<boolean> {
   return data.ok === true;
 }
 
-/** POST /api/fs/pick —— 服务端弹系统「选择文件夹」对话框，直接返回绝对路径（取消 → cancelled） */
+/** POST /api/fs/pick —— the server opens the native "choose folder" dialog and returns the absolute path directly (cancel → cancelled) */
 export async function pickFs(): Promise<{ cancelled: boolean; path?: string }> {
   const res = await fetch(BASE + '/fs/pick', { method: 'POST' });
   if (!res.ok) throw new Error('fs/pick ' + res.status);
   return (await res.json()) as { cancelled: boolean; path?: string };
 }
 
-/** GET /api/fs/list?path= —— 本地目录浏览（新建项目选目录；目录优先，过滤隐藏项） */
+/** GET /api/fs/list?path= —— local directory browsing (pick a directory for a new project; directories first, hidden entries filtered) */
 export interface FsEntry {
   name: string;
   path: string;
@@ -184,9 +184,9 @@ export function listFs(path?: string): Promise<FsList> {
   return req<FsList>('/fs/list' + q);
 }
 
-/** DELETE /api/projects/:pid —— 移除项目。
- *  mode=archive：仅移除可恢复（会话日志归档 + SQLite 标记，重新导入同目录自动恢复）
- *  mode=purge：彻底清理（删会话日志 + 记录）；均不动用户项目文件 */
+/** DELETE /api/projects/:pid —— remove a project.
+ *  mode=archive: recoverable removal (session logs archived + SQLite flag; re-importing the same directory restores it automatically)
+ *  mode=purge: full cleanup (deletes session logs + records); neither touches the user's project files */
 export async function removeProject(pid: string, mode: 'archive' | 'purge'): Promise<boolean> {
   const res = await fetch(BASE + '/projects/' + encodeURIComponent(pid), {
     method: 'DELETE',
@@ -198,7 +198,7 @@ export async function removeProject(pid: string, mode: 'archive' | 'purge'): Pro
   return data.ok === true;
 }
 
-/** POST /api/projects —— 显式注册项目（设计文档 §5.1 建议接口；id 由 name 推导，幂等） */
+/** POST /api/projects —— register a project explicitly (interface suggested in design doc §5.1; id derived from name, idempotent) */
 export async function createProject(path: string, name?: string): Promise<Project> {
   const res = await fetch(BASE + '/projects', {
     method: 'POST',
@@ -213,7 +213,7 @@ export async function createProject(path: string, name?: string): Promise<Projec
 }
 
 import type { CardState } from '../store/projection';
-// ---------- 批复队列（P0：Waiting 状态机） ----------
+// ---------- Approval queue (P0: Waiting state machine) ----------
 
 export interface ApprovalItem {
   id: number;
@@ -230,16 +230,16 @@ export interface ApprovalItem {
   task_title?: string;
   card_id?: string | null;
   card_kind?: string | null;
-  /** 策略建议（P1 O6）：同类批复历史沉淀，count>=2；{ scope, outcome, count } | null */
+  /** Policy suggestion (P1 O6): captured history of similar decisions, count>=2; { scope, outcome, count } | null */
   policy_suggestion?: { scope: string; outcome: 'approved' | 'rejected'; count: number } | null;
 }
 
-/** GET /api/approvals?project= —— 待批复队列 */
+/** GET /api/approvals?project= —— pending approval queue */
 export function listApprovals(pid: string): Promise<ApprovalItem[]> {
   return req<ApprovalItem[]>('/approvals?project=' + encodeURIComponent(pid));
 }
 
-/** POST /api/tasks/:sid/waiting —— 触发 Waiting{kind}（测试/控制用） */
+/** POST /api/tasks/:sid/waiting —— trigger Waiting{kind} (for testing/control) */
 export async function triggerWaiting(sid: string, kind: string, reason: string): Promise<boolean> {
   const res = await fetch(BASE + '/tasks/' + encodeURIComponent(sid) + '/waiting', {
     method: 'POST',
@@ -249,8 +249,8 @@ export async function triggerWaiting(sid: string, kind: string, reason: string):
   return res.ok;
 }
 
-/** POST /api/approvals/:id —— 决策（approve/reject + 评论送达 agent）；remember=true 沉淀策略原子。
- *  失败时 throw（含服务端错误体，如验收合入冲突 409）。 */
+/** POST /api/approvals/:id —— decide (approve/reject + comment delivered to the agent); remember=true captures a policy atom.
+ *  Throws on failure (includes the server error body, e.g. a 409 acceptance merge conflict). */
 export async function decideApproval(id: number, outcome: 'approved' | 'rejected', comment: string, remember = false): Promise<boolean> {
   const res = await fetch(BASE + '/approvals/' + id, {
     method: 'POST',
@@ -264,7 +264,7 @@ export async function decideApproval(id: number, outcome: 'approved' | 'rejected
   return true;
 }
 
-// ---------- 策略学习（P1 O6：规则可查看可删除） ----------
+// ---------- Policy learning (P1 O6: rules can be viewed and deleted) ----------
 
 export interface PolicyRow {
   id: number;
@@ -286,30 +286,30 @@ export async function deletePolicy(id: number): Promise<boolean> {
   return res.ok;
 }
 
-/** GET /api/approvals/suspended —— 挂起批复（O5：Waiting 超时自动挂起） */
+/** GET /api/approvals/suspended —— suspended approvals (O5: a Waiting that times out is suspended automatically) */
 export function listSuspendedApprovals(pid: string): Promise<ApprovalItem[]> {
   return req<ApprovalItem[]>('/approvals/suspended?project=' + encodeURIComponent(pid));
 }
 
-/** POST /api/approvals/:id/resume —— 恢复单条挂起（原会话从 Waiting 点继续） */
+/** POST /api/approvals/:id/resume —— resume a single suspended item (the original session continues from the Waiting point) */
 export async function resumeApproval(id: number): Promise<boolean> {
   const res = await fetch(BASE + '/approvals/' + id + '/resume', { method: 'POST' });
   return res.ok;
 }
 
-/** POST /api/projects/:pid/approvals/resume-all —— 批量恢复 */
+/** POST /api/projects/:pid/approvals/resume-all —— bulk resume */
 export async function resumeAllApprovals(pid: string): Promise<boolean> {
   const res = await fetch(BASE + '/projects/' + encodeURIComponent(pid) + '/approvals/resume-all', { method: 'POST' });
   return res.ok;
 }
 
-/** GET /api/presets —— 可用 agent 预设（每任务工具/人格组装） */
+/** GET /api/presets —— available agent presets (per-task tool/persona assembly) */
 export interface PresetInfo { id: string; name: string; description: string }
 export function listPresets(): Promise<PresetInfo[]> {
   return req<PresetInfo[]>('/presets');
 }
 
-// ---------- 预设 Profile（P0 §2.6：三轴组合 = 命名 Profile） ----------
+// ---------- Preset profiles (P0 §2.6: three-axis combination = named profile) ----------
 
 export interface Profile {
   id: string;
@@ -323,12 +323,12 @@ export interface Profile {
   is_default: boolean;
 }
 
-/** GET /api/projects/:pid/presets —— Profile 列表（含三轴 + 默认标记） */
+/** GET /api/projects/:pid/presets —— profile list (with the three axes + default flag) */
 export function listProfiles(pid: string): Promise<Profile[]> {
   return req<Profile[]>('/projects/' + encodeURIComponent(pid) + '/presets');
 }
 
-/** POST /api/projects/:pid/presets —— 自定义 Profile（三轴存新） */
+/** POST /api/projects/:pid/presets —— custom profile (save a new three-axis combination) */
 export async function createProfile(pid: string, input: Omit<Profile, 'project_id' | 'is_builtin' | 'is_default'>): Promise<Profile | null> {
   const res = await fetch(BASE + '/projects/' + encodeURIComponent(pid) + '/presets', {
     method: 'POST',
@@ -339,31 +339,31 @@ export async function createProfile(pid: string, input: Omit<Profile, 'project_i
   return (await res.json()) as Profile;
 }
 
-/** POST /api/projects/:pid/presets/:id/default —— 设项目默认 */
+/** POST /api/projects/:pid/presets/:id/default —— set the project default */
 export async function setDefaultProfile(pid: string, id: string): Promise<boolean> {
   const res = await fetch(BASE + '/projects/' + encodeURIComponent(pid) + '/presets/' + encodeURIComponent(id) + '/default', { method: 'POST' });
   return res.ok;
 }
 
-/** DELETE /api/projects/:pid/presets/:id —— 删自定义预设 */
+/** DELETE /api/projects/:pid/presets/:id —— delete a custom preset */
 export async function deleteProfile(pid: string, id: string): Promise<boolean> {
   const res = await fetch(BASE + '/projects/' + encodeURIComponent(pid) + '/presets/' + encodeURIComponent(id), { method: 'DELETE' });
   return res.ok;
 }
 
-/** 三轴 → 中文标签（建卡下拉/预设管理展示） */
-export const MODE_LABEL: Record<Profile['mode'], string> = { normal: '常规', plan: '计划', goal: '目标' };
-export const SETTING_LABEL: Record<Profile['setting'], string> = { light: '轻量', balanced: '均衡', delivery: '交付' };
-export const APPROVAL_LABEL: Record<Profile['approval'], string> = { ask: '询问', auto: '自动', yolo: 'Yolo（全放手）' };
-export const SANDBOX_LABEL: Record<Profile['sandbox'], string> = { 'read-only': '只读', 'workspace-write': '写项目', 'danger-full-access': '全放开' };
+/** Three axes → display labels (new-card dropdown / preset management) */
+export const MODE_LABEL: Record<Profile['mode'], string> = { normal: 'Normal', plan: 'Plan', goal: 'Goal' };
+export const SETTING_LABEL: Record<Profile['setting'], string> = { light: 'Light', balanced: 'Balanced', delivery: 'Delivery' };
+export const APPROVAL_LABEL: Record<Profile['approval'], string> = { ask: 'Ask', auto: 'Auto', yolo: 'Yolo (hands off)' };
+export const SANDBOX_LABEL: Record<Profile['sandbox'], string> = { 'read-only': 'Read-only', 'workspace-write': 'Write project', 'danger-full-access': 'Full access' };
 
 export function profileSummary(p: Profile): string {
   return `${MODE_LABEL[p.mode]} × ${SETTING_LABEL[p.setting]} × ${APPROVAL_LABEL[p.approval]}`;
 }
 
-// ---------- 度量（M4 §5.2 序列任务曲线 / 度量面板） ----------
+// ---------- Metrics (M4 §5.2 sequential task curve / metrics panel) ----------
 
-/** 单次执行度量（metrics 表行） */
+/** Metrics for a single execution (a metrics table row) */
 export interface MetricRow {
   id: number;
   project_id: string;
@@ -384,7 +384,7 @@ export interface MetricRow {
   created_at: number;
 }
 
-/** GET /api/metrics?project= —— 项目全部执行度量（按时间倒序，前端转正序画序列曲线） */
+/** GET /api/metrics?project= —— all execution metrics for the project (newest first; the frontend reverses it to draw the sequence curve) */
 export function getMetrics(pid: string): Promise<MetricRow[]> {
   return req<MetricRow[]>('/metrics?project=' + encodeURIComponent(pid));
 }
@@ -418,7 +418,7 @@ export interface KbNoteRow {
 export function listKbNotes(pid: string): Promise<KbNoteRow[]> {
   return req<KbNoteRow[]>('/kb/notes?project=' + encodeURIComponent(pid));
 }
-/** GET /api/kb/search —— 服务端融合检索（标题/内容/关键词/摘要/标签打分排序，unused/toxic 降权） */
+/** GET /api/kb/search —— server-side fused retrieval (scored on title/content/keywords/summary/tags; unused/toxic demoted) */
 export function searchKbNotes(pid: string, q: string): Promise<KbNoteRow[]> {
   return req<KbNoteRow[]>('/kb/search?project=' + encodeURIComponent(pid) + '&q=' + encodeURIComponent(q));
 }
@@ -429,7 +429,7 @@ export async function invalidateKbNote(id: string): Promise<boolean> {
   return res.ok;
 }
 
-/** POST /api/kb/notes/:id/stable —— 钉进 / 移出跨任务稳定前缀 */
+/** POST /api/kb/notes/:id/stable —— pin into / unpin from the cross-task stable prefix */
 export async function setKbNoteStable(id: string, pinned: boolean): Promise<KbNoteRow | null> {
   const res = await fetch(BASE + '/kb/notes/' + encodeURIComponent(id) + '/stable', {
     method: 'POST',
@@ -440,7 +440,7 @@ export async function setKbNoteStable(id: string, pinned: boolean): Promise<KbNo
   return (await res.json()) as KbNoteRow;
 }
 
-// ---------- 简单会话（A 组：两级制松入口） ----------
+// ---------- Simple chats (group A: the loose entry point of the two-tier model) ----------
 
 export interface ChatSummary {
   session_id: string;
@@ -452,7 +452,7 @@ export interface ChatSummary {
   started_at: number | null;
 }
 
-/** POST /api/projects/:pid/chats —— 创建独立会话（不挂卡） */
+/** POST /api/projects/:pid/chats —— create a standalone chat (not attached to a card) */
 export async function createChat(pid: string): Promise<{ session_id: string }> {
   const res = await fetch(BASE + '/projects/' + encodeURIComponent(pid) + '/chats', { method: 'POST' });
   if (!res.ok) throw new Error(`${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
@@ -467,7 +467,7 @@ export function getChat(sid: string): Promise<TaskState> {
   return req<TaskState>('/chats/' + encodeURIComponent(sid));
 }
 
-/** POST /api/chats/:sid —— 发消息（阻塞到 agent end_turn） */
+/** POST /api/chats/:sid —— send a message (blocks until the agent's end_turn) */
 export async function sendChat(sid: string, text: string): Promise<{ stop_reason: string }> {
   const res = await fetch(BASE + '/chats/' + encodeURIComponent(sid), {
     method: 'POST',
@@ -478,7 +478,7 @@ export async function sendChat(sid: string, text: string): Promise<{ stop_reason
   return (await res.json()) as { stop_reason: string };
 }
 
-/** POST /api/chats/:sid/title —— 用户改标题（钉住后自动生成停止） */
+/** POST /api/chats/:sid/title —— user renames the title (once pinned, auto-generation stops) */
 export async function renameChat(sid: string, title: string): Promise<boolean> {
   const res = await fetch(BASE + '/chats/' + encodeURIComponent(sid) + '/title', {
     method: 'POST',
@@ -492,7 +492,7 @@ export async function renameChat(sid: string, title: string): Promise<boolean> {
   return true;
 }
 
-/** POST /api/chats/:sid/fork —— 分叉会话（复制历史为新会话） */
+/** POST /api/chats/:sid/fork —— fork the chat (copy history into a new session) */
 export async function forkChat(sid: string): Promise<{ session_id: string; forked_from?: string }> {
   const res = await fetch(BASE + '/chats/' + encodeURIComponent(sid) + '/fork', { method: 'POST' });
   if (!res.ok) {
@@ -502,24 +502,24 @@ export async function forkChat(sid: string): Promise<{ session_id: string; forke
   return (await res.json()) as { session_id: string; forked_from?: string };
 }
 
-/** POST /api/chats/:sid/archive —— 归档会话（移出列表） */
+/** POST /api/chats/:sid/archive —— archive the chat (remove from list) */
 export async function archiveChat(sid: string): Promise<boolean> {
   const res = await fetch(BASE + '/chats/' + encodeURIComponent(sid) + '/archive', { method: 'POST' });
   return res.ok;
 }
 
-/** GET /api/projects/:pid/chats/archived —— 归档会话列表 */
+/** GET /api/projects/:pid/chats/archived —— archived chat list */
 export function listArchivedChats(pid: string): Promise<ChatSummary[]> {
   return req<ChatSummary[]>('/projects/' + encodeURIComponent(pid) + '/chats/archived');
 }
 
-/** POST /api/chats/:sid/restore —— 恢复归档会话 */
+/** POST /api/chats/:sid/restore —— restore an archived chat */
 export async function restoreChat(sid: string): Promise<boolean> {
   const res = await fetch(BASE + '/chats/' + encodeURIComponent(sid) + '/restore', { method: 'POST' });
   return res.ok;
 }
 
-/** POST /api/chats/:sid/promote —— 提升为任务（会话上下文进简报 → 建卡自动跑） */
+/** POST /api/chats/:sid/promote —— promote to a task (chat context goes into the brief → the new card runs automatically) */
 export async function promoteChat(sid: string, input: { title?: string; description?: string }): Promise<{ card_id: string; session_id: string }> {
   const res = await fetch(BASE + '/chats/' + encodeURIComponent(sid) + '/promote', {
     method: 'POST',
@@ -530,7 +530,7 @@ export async function promoteChat(sid: string, input: { title?: string; descript
   return (await res.json()) as { card_id: string; session_id: string };
 }
 
-/** POST /api/chats/:sid/kb —— 存入知识库（会话结论 → KB 笔记） */
+/** POST /api/chats/:sid/kb —— save to the knowledge base (chat conclusions → KB note) */
 export async function saveChatToKb(sid: string, title?: string): Promise<{ note_id: string }> {
   const res = await fetch(BASE + '/chats/' + encodeURIComponent(sid) + '/kb', {
     method: 'POST',

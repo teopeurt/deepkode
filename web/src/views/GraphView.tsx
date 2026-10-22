@@ -1,7 +1,7 @@
-// 职责：依赖图（DAG 预览）—— 按依赖深度分层；deps = 目标契约（建卡时指定，投影自最新执行）。
-// 节点 = 卡（状态 = 最新执行）；边 = deps 贝塞尔曲线，虚线黄 = 依赖未完成（阻塞）。
-// 视觉：Beautiful UI「Flowchart」移植（MIT © Shane Levine）—— 点阵画布 + 起点/依赖步骤卡。
-// 点击 → 详情抽屉（全部执行代次）。
+// Responsibility: dependency graph (DAG preview) —— layered by dependency depth; deps = target contract (specified when creating the card, projected from the latest execution).
+// Node = card (status = latest execution); edge = deps as Bézier curves, dashed yellow = unfinished dependency (blocked).
+// Visuals: port of Beautiful UI's "Flowchart" (MIT © Shane Levine) —— dot-grid canvas + start/dependency step cards.
+// Click → detail drawer (all execution generations).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useUi, writeHash } from '../store/ui';
 import { useProjection, cardStatus, latestExecution, activityText } from '../store/projection';
@@ -18,7 +18,7 @@ export function GraphView({ pid }: { pid: string }) {
   const all = useMemo(() => Object.values(cards), [cards]);
   const byId = useMemo(() => cards, [cards]);
 
-  // 依赖深度（目标契约 deps；无 deps → 全 0 层）
+  // Dependency depth (target contract deps; no deps → everything on layer 0)
   const depth = (cardId: string, seen: Set<string> = new Set()): number => {
     if (seen.has(cardId)) return 0;
     seen.add(cardId);
@@ -67,11 +67,11 @@ export function GraphView({ pid }: { pid: string }) {
   return (
     <div id="graphview">
       <div className="g-tip">
-        <span>依赖图</span><span>悬停高亮依赖</span><span>滚轮缩放 · 拖拽平移</span>
+        <span>Dependency graph</span><span>Hover to highlight dependencies</span><span>Scroll to zoom · drag to pan</span>
       </div>
       <div className="g-legend">
-        <span className="k"><span className="sw" />依赖已就绪</span>
-        <span className="k"><span className="sw dash" />依赖未完成</span>
+        <span className="k"><span className="sw" />Dependency ready</span>
+        <span className="k"><span className="sw dash" />Dependency unfinished</span>
       </div>
       <div
         className="g-wrap"
@@ -111,9 +111,9 @@ export function GraphView({ pid }: { pid: string }) {
                     writeHash(pid, 'graph', c.id, 'comments');
                   }}
                 >
-                  <div className="gc-kicker">{deps.length ? '依赖' : '起点'}</div>
+                  <div className="gc-kicker">{deps.length ? 'Depends' : 'Start'}</div>
                   <div className="gc-title">{c.title || c.id.slice(0, 14)}{c.milestone ? <span className="milestone-chip" style={{ marginLeft: 6 }}>{c.milestone}</span> : null}</div>
-                  {deps.length ? <div className="gc-cond">若 {deps.join('、')} 完成</div> : null}
+                  {deps.length ? <div className="gc-cond">If {deps.join(', ')} done</div> : null}
                   <div className="gc-row"><StatusPill status={st} /></div>
                   <div className="gc-meta">
                     {exec && exec.activities.length ? activityText(exec.activities[exec.activities.length - 1]).slice(0, 22) : '—'}
@@ -125,7 +125,7 @@ export function GraphView({ pid }: { pid: string }) {
         </div>
       </div>
       <div style={{ position: 'absolute', bottom: 44, left: 20, fontSize: 11, color: 'var(--text3)' }}>
-        依赖 DAG（建卡时指定 deps · 最新执行快照）
+        Dependency DAG (deps specified when the card is created · latest execution snapshot)
       </div>
     </div>
   );

@@ -1,17 +1,17 @@
-// 职责：对话面板（Beautiful UI「Chat」移植，MIT © Shane Levine）——
-//   顶栏分页签 + 消息流 + 底部 composer。推理/工具/流式由调用方塞进 children。
-// 激活 tab 支持操作菜单：改名（✎ 或菜单项）/ 分叉会话 / 归档会话。
+// Responsibility: chat panel (port of Beautiful UI's "Chat", MIT © Shane Levine) ——
+//   top tab bar + message stream + bottom composer. Reasoning/tools/streaming are passed in as children by the caller.
+// The active tab has an action menu: rename (✎ or menu item) / fork chat / archive chat.
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode, Ref } from 'react';
 
 export interface ChatTab {
   id: string;
   label: string;
-  /** 改名：输入框提交 */
+  /** Rename: submit from the input */
   onRename?: (id: string, title: string) => void;
-  /** 分叉会话（复制历史为新会话） */
+  /** Fork the chat (copy history into a new session) */
   onFork?: (id: string) => void;
-  /** 归档会话（移出列表） */
+  /** Archive the chat (remove from list) */
   onArchive?: (id: string) => void;
 }
 
@@ -31,7 +31,7 @@ export function ChatPanel({ tabs, tab, onTab, children, footer, bodyRef }: Props
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // 点外部关闭菜单
+  // Clicking outside closes the menu
   useEffect(() => {
     if (!menuId) return;
     const onDoc = (e: MouseEvent) => {
@@ -41,19 +41,19 @@ export function ChatPanel({ tabs, tab, onTab, children, footer, bodyRef }: Props
     return () => document.removeEventListener('mousedown', onDoc);
   }, [menuId]);
 
-  // 打开菜单：记录按钮 viewport 坐标，菜单 fixed 定位（脱离 overflow 裁剪）
-  // 自适应边界：右对齐会超出视口左侧时改为左对齐；底部空间不足时向上弹
+  // Open the menu: record the button's viewport coordinates and position the menu fixed (escapes overflow clipping)
+  // Boundary adaptation: switch to left alignment when right alignment would overflow the viewport's left edge; open upward when there isn't enough space below
   const openMenu = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (menuId === id) { setMenuId(null); return; }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const MENU_W = 128;
     const MENU_H = 104;
-    let x = rect.right - MENU_W; // 右对齐
-    if (x < 4) x = rect.left;     // 左边界不足 → 左对齐
-    if (x + MENU_W > window.innerWidth - 4) x = window.innerWidth - MENU_W - 4; // 右边界不足
+    let x = rect.right - MENU_W; // right-aligned
+    if (x < 4) x = rect.left;     // not enough room on the left → left-align
+    if (x + MENU_W > window.innerWidth - 4) x = window.innerWidth - MENU_W - 4; // not enough room on the right
     let y = rect.bottom + 4;
-    if (y + MENU_H > window.innerHeight - 4) y = rect.top - MENU_H - 4; // 底部不足 → 向上弹
+    if (y + MENU_H > window.innerHeight - 4) y = rect.top - MENU_H - 4; // not enough room below → open upward
     setMenuPos({ x, y });
     setMenuId(id);
   };
@@ -98,7 +98,7 @@ export function ChatPanel({ tabs, tab, onTab, children, footer, bodyRef }: Props
                         <button
                           type="button"
                           className={'chatpanel-tab-btn' + (menuId === t.id ? ' open' : '')}
-                          title="更多操作"
+                          title="More actions"
                           onClick={(e) => openMenu(t.id, e)}
                         >
                           ⋮
@@ -122,21 +122,21 @@ export function ChatPanel({ tabs, tab, onTab, children, footer, bodyRef }: Props
           onClick={(e) => e.stopPropagation()}
         >
           <button type="button" className="chatpanel-tab-menu-item" onClick={() => { setMenuId(null); const t = tabs?.find((x) => x.id === menuId); if (t) { setDraft(t.label.replace(/…$/, '')); setRenamingId(t.id); } }}>
-            改标题
+            Rename
           </button>
           <button
             type="button"
             className="chatpanel-tab-menu-item"
             onClick={() => { const t = tabs?.find((x) => x.id === menuId); setMenuId(null); t?.onFork?.(t.id); }}
           >
-            分叉会话
+            Fork chat
           </button>
           <button
             type="button"
             className="chatpanel-tab-menu-item danger"
             onClick={() => { const t = tabs?.find((x) => x.id === menuId); setMenuId(null); t?.onArchive?.(t.id); }}
           >
-            归档会话
+            Archive chat
           </button>
         </div>
       ) : null}

@@ -1,13 +1,13 @@
-// 职责：Topbar —— 侧栏折叠钮 + logo + 面包屑 + 连接点 + 建卡/跑全部（项目内）。
-// 连接点：在线绿 / 断连·重连中橙（闪烁）/ 离线灰；断连期间禁用控制类操作（建卡）。
+// Responsibility: Topbar —— sidebar collapse button + logo + breadcrumbs + connection dot + new card / run all (inside a project).
+// Connection dot: online green / disconnected·reconnecting orange (blinking) / offline gray; control actions (new card) are disabled while disconnected.
 import { useUi, writeHash } from '../../store/ui';
 import { useProjection } from '../../store/projection';
 import { Icon } from '../icons';
 import { Button } from '../Button';
 
 const VIEW_LABEL: Record<string, string> = {
-  projhome: '首页', kanban: '看板', chat: '会话',
-  sessions: '会话记录', graph: '图', kb: '知识库', files: '文件', metrics: '度量',
+  projhome: 'Home', kanban: 'Board', chat: 'Chat',
+  sessions: 'History', graph: 'Graph', kb: 'Knowledge', files: 'Files', metrics: 'Metrics',
 };
 
 export function Topbar() {
@@ -24,10 +24,10 @@ export function Topbar() {
   const proj = pid ? projects[pid] ?? pending[pid] : null;
   const online = conn === 'online';
 
-  const connText = conn === 'online' ? `服务在线 · ${Object.keys(projects).length} 项目` : conn === 'reconnect' ? '断连 · 重连中' : '服务不可达';
+  const connText = conn === 'online' ? `Service online · ${Object.keys(projects).length} projects` : conn === 'reconnect' ? 'Disconnected · reconnecting' : 'Service unreachable';
 
   const breadcrumb = !inProject ? (
-    <b>工作台</b>
+    <b>Workspace</b>
   ) : (
     <>
       <a
@@ -36,7 +36,7 @@ export function Topbar() {
           writeHash(null, 'home', null, 'comments');
         }}
       >
-        项目
+        Projects
       </a>
       <span className="sep">/</span>
       <b>{proj?.name ?? pid}</b>
@@ -51,10 +51,10 @@ export function Topbar() {
 
   return (
     <header className="topbar">
-      <Button variant="icon" aria-label="折叠侧栏" title="折叠侧栏" onClick={toggleSide}>
+      <Button variant="icon" aria-label="Collapse sidebar" title="Collapse sidebar" onClick={toggleSide}>
         <Icon name="side" size="sm" />
       </Button>
-      {/* 进入项目后不显示 logo：面包屑的「项目」即可回工作台，避免 logo/面包屑重复占位 */}
+      {/* No logo inside a project: the breadcrumb's "Projects" already returns to the workspace, so logo and breadcrumb don't duplicate each other */}
       <div id="breadcrumb">{breadcrumb}</div>
       <div className="spacer" />
       <div id="conn" data-state={conn}>
@@ -66,20 +66,20 @@ export function Topbar() {
           <Button
             className={inProject ? '' : 'hidden'}
             disabled={!online}
-            title={online ? undefined : '断连期间禁用控制操作'}
+            title={online ? undefined : 'Control actions are disabled while disconnected'}
             onClick={() => {
               if (!pid) return;
               useUi.getState().setRoute({ openId: null, sessionId: null });
               setNewTaskOpen(true);
             }}
           >
-            <Icon name="plus" size="sm" />建卡
+            <Icon name="plus" size="sm" />New card
           </Button>
           <Button variant="primary" className={inProject ? '' : 'hidden'} disabled={!online} onClick={() => {
-            toast('任务创建即自动执行；如无新任务可点此刷新');
+            toast('New tasks run automatically on creation; click here to refresh if there are no new tasks');
             useProjection.getState().bump();
           }}>
-            <Icon name="play" size="sm" />跑全部
+            <Icon name="play" size="sm" />Run all
           </Button>
         </>
       ) : null}

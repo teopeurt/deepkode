@@ -1,4 +1,4 @@
-// 职责：Modal —— 遮罩 + 居中模态（ESC 关闭，点击遮罩关闭）。
+// Responsibility: Modal —— overlay + centered modal (ESC closes it, clicking the overlay closes it).
 import { useEffect, type ReactNode } from 'react';
 
 export function Modal({

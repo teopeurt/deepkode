@@ -1,5 +1,5 @@
-// 职责：设置模态 —— 通用（主题）/ 预设（Profile 三轴管理，真实 API）/ 模型 / 插件 / MCP / Skills。
-// 预设页签真实生效（listProfiles / setDefaultProfile / createProfile）；其余页签为只读演示。
+// Responsibility: settings modal —— general (theme) / presets (three-axis profile management, real API) / model / plugins / MCP / Skills.
+// The presets tab really takes effect (listProfiles / setDefaultProfile / createProfile); the other tabs are read-only demos.
 import { useEffect, useState } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
@@ -15,10 +15,10 @@ import {
 type TabId = 'general' | 'presets' | 'model' | 'plugins' | 'mcp' | 'skills';
 
 const TABS: { id: TabId; label: string }[] = [
-  { id: 'general', label: '通用' },
-  { id: 'presets', label: '预设' },
-  { id: 'model', label: '模型' },
-  { id: 'plugins', label: '插件' },
+  { id: 'general', label: 'General' },
+  { id: 'presets', label: 'Presets' },
+  { id: 'model', label: 'Model' },
+  { id: 'plugins', label: 'Plugins' },
   { id: 'mcp', label: 'MCP' },
   { id: 'skills', label: 'Skills' },
 ];
@@ -32,7 +32,7 @@ function SettingRow({ label, desc, children }: { label: string; desc?: string; c
   );
 }
 
-/** 项目设置页签（热更新）：检索阈值 / 装配条数 —— 真实写入 storage，下次装配生效（无需重启引擎）。 */
+/** Project settings tab (hot update): retrieval threshold / brief entry count —— written to storage for real, effective on the next assembly (no engine restart needed). */
 function ProjectSettingsTab({ pid }: { pid: string }) {
   const toast = useUi((s) => s.toast);
   const [threshold, setThreshold] = useState<number>(0.15);
@@ -48,7 +48,7 @@ function ProjectSettingsTab({ pid }: { pid: string }) {
         setEntries(d.brief_entries);
         setLoaded(true);
       })
-      .catch(() => { setLoaded(true); toast('设置读取失败'); });
+      .catch(() => { setLoaded(true); toast('Failed to read settings'); });
   };
   useEffect(load, [pid]);
 
@@ -58,12 +58,12 @@ function ProjectSettingsTab({ pid }: { pid: string }) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ retrieval_threshold: threshold, brief_entries: entries }),
     });
-    toast(r.ok ? '已保存 · 下次任务装配生效（热更新，无需重启）' : `保存失败（${r.status}）`);
+    toast(r.ok ? 'Saved · effective on the next task assembly (hot update, no restart needed)' : `Save failed (${r.status})`);
   };
 
   return (
     <div style={{ marginTop: 4 }}>
-      <SettingRow label="检索阈值" desc={`知识检索命中门槛（${threshold.toFixed(2)}）—— 越高越严格`}>
+      <SettingRow label="Retrieval threshold" desc={`Knowledge-retrieval hit threshold (${threshold.toFixed(2)}) —— higher is stricter`}>
         <input
           type="range" min={0.05} max={0.9} step={0.05} value={threshold}
           onChange={(e) => setThreshold(Number(e.target.value))}
@@ -71,7 +71,7 @@ function ProjectSettingsTab({ pid }: { pid: string }) {
         />
         <span className="set-badge">{threshold.toFixed(2)}</span>
       </SettingRow>
-      <SettingRow label="装配条数" desc={`简报最多装配知识条数（${entries}）—— 越多上下文越全也越贵`}>
+      <SettingRow label="Brief entries" desc={`Maximum knowledge entries assembled into the brief (${entries}) —— more gives fuller context but costs more`}>
         <input
           type="range" min={1} max={10} step={1} value={entries}
           onChange={(e) => setEntries(Number(e.target.value))}
@@ -80,13 +80,13 @@ function ProjectSettingsTab({ pid }: { pid: string }) {
         <span className="set-badge">{entries}</span>
       </SettingRow>
       <div style={{ marginTop: 10 }}>
-        <Button variant="primary" mini disabled={!loaded} onClick={() => void save()}>保存</Button>
+        <Button variant="primary" mini disabled={!loaded} onClick={() => void save()}>Save</Button>
       </div>
     </div>
   );
 }
 
-/** 预设管理页签：Profile 列表 + 三轴 + 设默认 + 自定义（§2.6 项目级管理）。 */
+/** Preset management tab: profile list + three axes + set default + custom (§2.6 per-project management). */
 function PresetTab({ pid }: { pid: string | null }) {
   const toast = useUi((s) => s.toast);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -104,7 +104,7 @@ function PresetTab({ pid }: { pid: string | null }) {
     }
     void listProfiles(pid).then(setProfiles).catch((e) => {
       setProfiles([]);
-      toast(`预设列表加载失败：${e instanceof Error ? e.message : String(e)}`);
+      toast(`Failed to load presets: ${e instanceof Error ? e.message : String(e)}`);
     });
   };
   useEffect(load, [pid]);
@@ -112,63 +112,63 @@ function PresetTab({ pid }: { pid: string | null }) {
   const makeDefault = async (id: string) => {
     if (!pid) return;
     const ok = await setDefaultProfile(pid, id);
-    toast(ok ? `已设「${profiles.find((p) => p.id === id)?.name ?? id}」为项目默认` : '设置默认失败');
+    toast(ok ? `Set "${profiles.find((p) => p.id === id)?.name ?? id}" as the project default` : 'Failed to set default');
     if (ok) load();
   };
 
   const create = async () => {
-    if (!pid || !newId.trim() || !newName.trim()) { toast('id 和 name 必填'); return; }
+    if (!pid || !newId.trim() || !newName.trim()) { toast('id and name are required'); return; }
     const p = await createProfile(pid, { id: newId.trim(), name: newName.trim(), mode, setting, approval, sandbox });
-    toast(p ? `已创建预设「${p.name}」` : '创建失败（id 冲突或格式不对）');
+    toast(p ? `Created preset "${p.name}"` : 'Creation failed (id conflict or bad format)');
     if (p) { setNewId(''); setNewName(''); load(); }
   };
 
   const remove = async (id: string, name: string) => {
     if (!pid) return;
     const ok = await deleteProfile(pid, id);
-    toast(ok ? `已删除「${name}」` : '删除失败（内置不能删）');
+    toast(ok ? `Deleted "${name}"` : 'Delete failed (built-ins cannot be deleted)');
     if (ok) load();
   };
 
   return (
     <>
-      <SettingRow label="项目预设（Profile）" desc="三轴组合 = 命名预设；首个预设 = 项目默认（§2.6）" />
-      {!pid && <div className="desc" style={{ padding: '8px 0' }}>先打开一个项目，预设是按项目存的。</div>}
-      {pid && profiles.length === 0 && <div className="desc" style={{ padding: '8px 0' }}>这个项目还没有预设（内置四条会在首次打开时写入）。</div>}
+      <SettingRow label="Project presets (profiles)" desc="Three-axis combination = named preset; the first preset = the project default (§2.6)" />
+      {!pid && <div className="desc" style={{ padding: '8px 0' }}>Open a project first; presets are stored per project.</div>}
+      {pid && profiles.length === 0 && <div className="desc" style={{ padding: '8px 0' }}>This project has no presets yet (the four built-ins are written the first time it is opened).</div>}
       {profiles.map((p) => (
-        <SettingRow key={p.id} label={`${p.name}${p.is_default ? ' ★' : ''}${p.is_builtin ? ' · 内置' : ''}`} desc={profileSummary(p)}>
+        <SettingRow key={p.id} label={`${p.name}${p.is_default ? ' ★' : ''}${p.is_builtin ? ' · built-in' : ''}`} desc={profileSummary(p)}>
           <span style={{ display: 'flex', gap: 6 }}>
-            <Button mini variant="ghost" disabled={p.is_default} onClick={() => void makeDefault(p.id)} title={`设「${p.name}」为默认`}>设默认</Button>
+            <Button mini variant="ghost" disabled={p.is_default} onClick={() => void makeDefault(p.id)} title={`Set "${p.name}" as default`}>Set default</Button>
             {!p.is_builtin && (
-              <Button mini variant="ghost" onClick={() => void remove(p.id, p.name)} title={`删除「${p.name}」`}>删除</Button>
+              <Button mini variant="ghost" onClick={() => void remove(p.id, p.name)} title={`Delete "${p.name}"`}>Delete</Button>
             )}
           </span>
         </SettingRow>
       ))}
       <div className="preset-custom">
         <div className="preset-custom-head">
-          <span className="lbl">自定义预设</span>
-          <span className="desc">复制现有三轴存新预设（内置不可覆盖，用新 id）</span>
+          <span className="lbl">Custom preset</span>
+          <span className="desc">Copy an existing three-axis combination into a new preset (built-ins cannot be overwritten; use a new id)</span>
         </div>
         <div className="preset-form">
           <div className="preset-form-row">
-            <input placeholder="id（小写连字符，如 my-plan）" value={newId} onChange={(e) => setNewId(e.target.value)} />
-            <input placeholder="显示名（如 我的计划流）" value={newName} onChange={(e) => setNewName(e.target.value)} />
+            <input placeholder="id (lowercase with hyphens, e.g. my-plan)" value={newId} onChange={(e) => setNewId(e.target.value)} />
+            <input placeholder="Display name (e.g. My planning flow)" value={newName} onChange={(e) => setNewName(e.target.value)} />
           </div>
           <div className="preset-axes">
-            <select value={mode} onChange={(e) => setMode(e.target.value as Profile['mode'])} title="协作方式">
-              {(Object.keys(MODE_LABEL) as Profile['mode'][]).map((k) => <option key={k} value={k}>方式·{MODE_LABEL[k]}</option>)}
+            <select value={mode} onChange={(e) => setMode(e.target.value as Profile['mode'])} title="Collaboration mode">
+              {(Object.keys(MODE_LABEL) as Profile['mode'][]).map((k) => <option key={k} value={k}>Mode · {MODE_LABEL[k]}</option>)}
             </select>
-            <select value={setting} onChange={(e) => setSetting(e.target.value as Profile['setting'])} title="执行设定">
-              {(Object.keys(SETTING_LABEL) as Profile['setting'][]).map((k) => <option key={k} value={k}>设定·{SETTING_LABEL[k]}</option>)}
+            <select value={setting} onChange={(e) => setSetting(e.target.value as Profile['setting'])} title="Execution setting">
+              {(Object.keys(SETTING_LABEL) as Profile['setting'][]).map((k) => <option key={k} value={k}>Setting · {SETTING_LABEL[k]}</option>)}
             </select>
-            <select value={approval} onChange={(e) => setApproval(e.target.value as Profile['approval'])} title="审批姿态">
-              {(Object.keys(APPROVAL_LABEL) as Profile['approval'][]).map((k) => <option key={k} value={k}>审批·{APPROVAL_LABEL[k]}</option>)}
+            <select value={approval} onChange={(e) => setApproval(e.target.value as Profile['approval'])} title="Approval posture">
+              {(Object.keys(APPROVAL_LABEL) as Profile['approval'][]).map((k) => <option key={k} value={k}>Approval · {APPROVAL_LABEL[k]}</option>)}
             </select>
-            <select value={sandbox} onChange={(e) => setSandbox(e.target.value as Profile['sandbox'])} title="沙箱">
-              {(Object.keys(SANDBOX_LABEL) as Profile['sandbox'][]).map((k) => <option key={k} value={k}>沙箱·{SANDBOX_LABEL[k]}</option>)}
+            <select value={sandbox} onChange={(e) => setSandbox(e.target.value as Profile['sandbox'])} title="Sandbox">
+              {(Object.keys(SANDBOX_LABEL) as Profile['sandbox'][]).map((k) => <option key={k} value={k}>Sandbox · {SANDBOX_LABEL[k]}</option>)}
             </select>
-            <Button mini variant="primary" onClick={() => void create()}>创建预设</Button>
+            <Button mini variant="primary" onClick={() => void create()}>Create preset</Button>
           </div>
         </div>
       </div>
@@ -189,7 +189,7 @@ export function SettingsModal() {
         <ThemePicker />
         {pid ? (
           <div className="set-row" style={{ marginTop: 14, display: 'block' }}>
-            <div className="lbl">项目设置<div className="desc">检索与装配（热更新 · 项目级）</div></div>
+            <div className="lbl">Project settings<div className="desc">Retrieval and assembly (hot update · per project)</div></div>
             <ProjectSettingsTab pid={pid} />
           </div>
         ) : null}
@@ -198,25 +198,25 @@ export function SettingsModal() {
     if (tab === 'presets') return <PresetTab pid={pid} />;
     if (tab === 'model') return (
       <>
-        <SettingRow label="默认分层" desc="难回合自动升级 pro（§6.3 · 目标契约）">
+        <SettingRow label="Default tiering" desc="Hard turns are upgraded to pro automatically (§6.3 · target contract)">
           <select defaultValue="auto"><option>flash</option><option>auto</option><option>pro</option></select>
         </SettingRow>
-        <SettingRow label="升级阈值" desc="失败信号 ≥ N 次升级剩余回合">
+        <SettingRow label="Upgrade threshold" desc="Upgrade the remaining turns after ≥ N failure signals">
           <input type="number" defaultValue={3} min={1} max={10} />
         </SettingRow>
-        <SettingRow label="定价表（峰谷）" desc="高峰(北京9-12/14-18) Flash 输入¥3/输出¥9/缓存命中¥0.1 · 空闲半价（每 M token）" />
+        <SettingRow label="Price table (peak/off-peak)" desc="Peak (Beijing 9-12/14-18) Flash input ¥3 / output ¥9 / cache hit ¥0.1 · off-peak half price (per M tokens)" />
       </>
     );
     if (tab === 'plugins') return (
       <>
         {[
-          ['知识库', 'SQLite 双时态边失效 + 检索'],
-          ['任务编排', 'DAG 调度 · 拓扑执行 · 局部重跑'],
-          ['执行经济学', 'cache-first 前缀分区 · 成本计量'],
-          ['工具修复', 'scavenge / truncation / flatten'],
+          ['Knowledge base', 'SQLite bitemporal edge invalidation + retrieval'],
+          ['Task orchestration', 'DAG scheduling · topological execution · partial reruns'],
+          ['Execution economics', 'cache-first prefix partitioning · cost metering'],
+          ['Tool repair', 'scavenge / truncation / flatten'],
         ].map(([name, desc]) => (
           <SettingRow key={name} label={name} desc={desc}>
-            <Switch checked onChange={() => toast('插件开关为目标契约（P0 未开）')} />
+            <Switch checked onChange={() => toast('Plugin toggles are a target contract (not enabled in P0)')} />
           </SettingRow>
         ))}
       </>
@@ -224,23 +224,23 @@ export function SettingsModal() {
     if (tab === 'mcp') return (
       <>
         {([
-          ['github', '仓库与 PR 操作', 12],
-          ['filesystem', '本地文件读写', 8],
+          ['github', 'Repository and PR operations', 12],
+          ['filesystem', 'Local file read/write', 8],
         ] as [string, string, number][]).map(([name, desc, n]) => (
           <SettingRow key={name} label={name} desc={desc}>
-            <span className={'set-badge ' + (n ? 'on' : 'off')}>{n} 工具</span>
+            <span className={'set-badge ' + (n ? 'on' : 'off')}>{n} tools</span>
           </SettingRow>
         ))}
         <div className="set-add">
-          <Button mini onClick={() => toast('添加 MCP 服务器 = 目标契约（P0 未开）')}>添加 MCP 服务器</Button>
+          <Button mini onClick={() => toast('Adding an MCP server = target contract (not enabled in P0)')}>Add MCP server</Button>
         </div>
       </>
     );
     return (
       <>
         {['find-skills', 'gitnexus-cli', 'dsh-prose-standard'].map((name) => (
-          <SettingRow key={name} label={name} desc="目标契约 · P0 未开">
-            <Switch checked onChange={() => toast('Skills 开关为目标契约（P0 未开）')} />
+          <SettingRow key={name} label={name} desc="Target contract · not enabled in P0">
+            <Switch checked onChange={() => toast('Skills toggles are a target contract (not enabled in P0)')} />
           </SettingRow>
         ))}
       </>
@@ -250,8 +250,8 @@ export function SettingsModal() {
   return (
     <Modal open={open} onClose={() => setOpen(false)} wide>
       <div className="set-head">
-        <h3>设置</h3>
-        <Button variant="quiet" mini onClick={() => setOpen(false)}>关闭</Button>
+        <h3>Settings</h3>
+        <Button variant="quiet" mini onClick={() => setOpen(false)}>Close</Button>
       </div>
       <div className="set-tabs">
         {TABS.map((t) => (

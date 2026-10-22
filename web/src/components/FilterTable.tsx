@@ -1,5 +1,5 @@
-// 职责：筛选表（Beautiful UI「Filter Table」移植，MIT © Shane Levine）——
-//   顶部状态 chips 重组表格；chip 计数来自当前 rows（可与外层搜索叠加）。
+// Responsibility: filter table (port of Beautiful UI's "Filter Table", MIT © Shane Levine) ——
+//   status chips at the top regroup the table; chip counts come from the current rows (can be combined with an outer search).
 import { useMemo, type ReactNode } from 'react';
 
 export interface FilterChip {
@@ -16,7 +16,7 @@ export interface FilterCol<T> {
 
 interface Props<T> {
   chips: FilterChip[];
-  /** 当前 chip；'all' = 不筛 */
+  /** Current chip; 'all' = no filtering */
   value: string;
   onChange: (id: string) => void;
   chipOf: (row: T) => string;
@@ -71,7 +71,7 @@ export function FilterTable<T>({
         <tbody>
           {shown.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} className="ftable-empty">{empty ?? '无匹配'}</td>
+              <td colSpan={columns.length} className="ftable-empty">{empty ?? 'No matches'}</td>
             </tr>
           ) : shown.map((row) => (
             <tr

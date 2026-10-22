@@ -1,5 +1,5 @@
-// 职责：背景氛围层（#atmo）——按主题 atmo spec 渲染光晕 / 星空 / 光斑，档位控制强度（off/soft/on/strong）。
-// 渲染逻辑与 taskboard-v9 renderAtmo 一致：glow/blobs 走 CSS 径向渐变，stars 走内联 SVG 散点。
+// Responsibility: background atmosphere layer (#atmo) —— renders glow / starfield / light blobs from the theme's atmo spec; the level controls intensity (off/soft/on/strong).
+// Rendering logic matches taskboard-v9 renderAtmo: glow/blobs use CSS radial gradients, stars use scattered inline SVG points.
 import { useMemo } from 'react';
 import { useThemeStore, type AtmoLevel } from './ThemeProvider';
 import { useThemeCtx } from './ThemeProvider';
@@ -7,7 +7,7 @@ import type { AtmoSpec } from './themes';
 
 const LEVEL_OPACITY: Record<AtmoLevel, number> = { off: 0, soft: 0.5, on: 0.75, strong: 1 };
 
-/** 确定性伪随机（与原型同种子算法，保证每套主题星空稳定） */
+/** Deterministic pseudo-random (same seeded algorithm as the prototype, so each theme's starfield is stable) */
 function seededRand(seed0: number) {
   let seed = seed0;
   return () => {

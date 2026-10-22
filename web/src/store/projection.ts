@@ -1,15 +1,15 @@
-// 职责：任务投影 store（zustand）+ 状态推导。投影形状 {pid:{cardId:CardState}} 来自真实 REST；
-// M2.3（O1=B）：卡 = 资产（1 卡 N 执行），执行 = 会话；看板状态 = 最新执行代次。
-// WS 事件是「变化信号」：驱动防抖重拉（增量按 last_seq 追平），并在 activeSession 边界内折叠 usage。
-// 红线 2：阻塞（依赖未完成）每次渲染现算（depsUnmet 纯函数），绝不写状态字段。
-// 红线 4：成本/缓存命中按 usage 数据计算，会话级（usage 从 WS assistant/message 累积，无 usage 显示 —）。
+// Responsibility: task projection store (zustand) + state derivation. The projection shape {pid:{cardId:CardState}} comes from the real REST API;
+// M2.3 (O1=B): card = asset (1 card N executions), execution = session; board status = the latest execution generation.
+// WS events are "change signals": they drive a debounced refetch (incremental catch-up via last_seq) and fold usage within the activeSession boundary.
+// Red line 2: blocked (unfinished dependencies) is computed on every render (depsUnmet pure function), never written to a state field.
+// Red line 4: cost / cache hit are computed from usage data, per session (usage accumulates from WS assistant/message; with no usage, show —).
 import { create } from 'zustand';
 import * as api from '../api/client';
 
-// ---------- 真实契约类型（docs/frontend-design-v1.md §3.2，形状以服务为准） ----------
+// ---------- Real contract types (docs/frontend-design-v1.md §3.2; the service is the source of truth for shapes) ----------
 export type TaskStatus = 'Pending' | 'Running' | 'Done' | 'Failed' | 'Cancelled';
 
-/** WS /api/events 事件（dsh 会话日志事件镜像：{type,seq,time,data}；session 事件自带 id） */
+/** WS /api/events event (mirror of dsh session-log events: {type,seq,time,data}; session events carry their own id) */
 export interface WsEvent {
   type: string;
   seq?: number;
@@ -18,7 +18,7 @@ export interface WsEvent {
   [k: string]: unknown;
 }
 
-/** 轨迹活动（服务端 fold 带 at=事件时间 ms、turn=归属回合；dsh 轨迹模型的时间/回合维度） */
+/** Trajectory activity (server fold adds at = event time in ms, turn = owning turn; the time/turn dimensions of the dsh trajectory model) */
 export type Activity =
   | { Text: { text: string; at?: number; turn?: number } }
   | { Reasoning: { text: string; at?: number; turn?: number } }
@@ -32,7 +32,7 @@ export interface ToolCall {
   is_error: boolean;
 }
 
-/** assistant/message.usage（真实字段，实测形状） */
+/** assistant/message.usage (real fields, shape observed in practice) */
 export interface Usage {
   cacheReadTokens: number;
   inputTokens: number;
@@ -40,72 +40,72 @@ export interface Usage {
   reasoningTokens: number;
 }
 
-/** 评论线程条目（评论 = 唯一控制通道；服务端 fold user/assistant message 产出） */
+/** Comment-thread entry (comments = the only control channel; produced by the server folding user/assistant messages) */
 export interface Comment {
   who: 'user' | 'agent';
   text: string;
   at: number;                 // epoch ms
 }
 
-/** 执行 = 会话（D1.2 1:1）；TaskState 是看板卡的执行单元（1 卡 N 执行里的 N） */
+/** Execution = session (D1.2 1:1); TaskState is the execution unit of a board card (the N in 1 card N executions) */
 export interface TaskState {
-  id: string;                 // = dsh 会话 id（opaque，UI 不解析）
+  id: string;                 // = dsh session id (opaque, the UI does not parse it)
   status: TaskStatus;
   title?: string;
   model?: string;
   turns: number;
   steps: number;
   tool_calls: ToolCall[];
-  activities: Activity[];     // 有界队列（MAX_ACTIVITIES=200，服务侧）
-  comments?: Comment[];       // 评论线程（P0.5：服务端已产出）
+  activities: Activity[];     // bounded queue (MAX_ACTIVITIES=200, server side)
+  comments?: Comment[];       // comment thread (P0.5: already produced by the server)
   started_at?: number;
   finished_at?: number;
-  last_seq: number;           // 已折叠到的日志 seq（增量同步水位）
-  recovered: boolean;         // 服务重启后从会话日志重放标记
-  /** Waiting 判别联合（§2.5）：非空 = 任务停在等待批复 */
+  last_seq: number;           // log seq folded so far (incremental sync watermark)
+  recovered: boolean;         // flag: replayed from the session log after a service restart
+  /** Waiting discriminated union (§2.5): non-null = the task is paused awaiting a decision */
   waiting?: { kind: 'plan' | 'permission' | 'acceptance' | 'cost' | 'calibrate' | 'checkpoint'; reason: string; payload: Record<string, unknown> } | null;
-  /** 执行启动时的预设快照（§2.6：执行契约，随任务生命周期延续） */
+  /** Preset snapshot at execution start (§2.6: execution contract, carried through the task lifecycle) */
   preset?: { id: string; name: string; mode: string; setting: string; approval: string; sandbox: string } | null;
-  /** 依赖契约快照（继承自卡的 deps；图 DAG 边 = 最新执行此字段） */
+  /** Dependency contract snapshot (inherited from the card's deps; graph DAG edges = this field on the latest execution) */
   deps?: string[];
-  /** 隔离区创建失败：本次执行回退共享项目目录（M5） */
+  /** Isolation area creation failed: this execution fell back to the shared project directory (M5) */
   isolated?: boolean;
-  /** 任务级隔离工作区（git worktree） */
+  /** Task-level isolated workspace (git worktree) */
   worktree?: { path: string; branch: string } | null;
 }
 
-/** Waiting 判别联合（§2.5）：非空 = 任务停在等待批复 */
+/** Waiting discriminated union (§2.5): non-null = the task is paused awaiting a decision */
 export interface Waiting {
   kind: 'plan' | 'permission' | 'acceptance' | 'cost' | 'calibrate' | 'checkpoint';
   reason: string;
   payload: Record<string, unknown>;
 }
 
-/** Waiting kind 中文标签（批复队列/抽屉/会话页共用） */
+/** Waiting kind display labels (shared by the approval queue / drawer / session page) */
 export const WAITING_LABEL: Record<Waiting['kind'], string> = {
-  plan: '计划确认',
-  calibrate: '验收标准确认',
-  checkpoint: '阶段确认',
-  permission: '权限请求',
-  acceptance: '交付验收',
-  cost: '成本确认',
+  plan: 'Plan review',
+  calibrate: 'Acceptance criteria review',
+  checkpoint: 'Checkpoint review',
+  permission: 'Permission request',
+  acceptance: 'Delivery acceptance',
+  cost: 'Cost review',
 };
 
 export function waitingLabel(kind: string): string {
   return WAITING_LABEL[kind as Waiting['kind']] ?? kind;
 }
 
-/** 资产卡（O1=B）：卡 = 需求/缺陷/任务 + 里程碑，挂 executions（1 卡 N 执行） */
+/** Asset card (O1=B): card = requirement/defect/task + milestone, with executions attached (1 card N executions) */
 export interface CardState {
-  id: string;                 // 卡 id（opaque）
+  id: string;                 // card id (opaque)
   title: string;
   description?: string;
   kind?: string;              // 'requirement' | 'bug' | 'task'
   milestone?: string | null;
-  deps?: string[];            // 依赖契约：完成本卡前需先完成的卡 id
-  criteria?: string | null;   // 需求契约：验收标准（D1.7 校准批准后写回）
-  executions: Record<string, TaskState>;  // sid → 执行（键 = 会话 id）
-  exec_order?: string[];      // 执行代次顺序（创建序；末位 = 最新）
+  deps?: string[];            // dependency contract: ids of cards that must be completed before this one
+  criteria?: string | null;   // requirement contract: acceptance criteria (written back after D1.7 calibration is approved)
+  executions: Record<string, TaskState>;  // sid → execution (key = session id)
+  exec_order?: string[];      // execution generation order (creation order; last = latest)
   created_at?: number;
   execution_count?: number;
   project_id?: string;
@@ -116,12 +116,12 @@ export interface Project {
   name: string;
   path: string;
   card_count: number;
-  /** 状态计数 [Pending, Running, Done, Failed, Cancelled]（按卡的最新执行状态；列表轻量渲染） */
+  /** Status counts [Pending, Running, Done, Failed, Cancelled] (by each card's latest execution status; for lightweight list rendering) */
   counts?: [number, number, number, number, number];
 }
 
-// ---------- 执行经济学（P1.5 修正：DeepSeek V4 峰谷定价，2026-08-17 生效） ----------
-/** 元/百万 tokens；高峰 = 北京时间 9:00-12:00 ∪ 14:00-18:00（其余空闲，空闲=高峰半价） */
+// ---------- Execution economics (P1.5 fix: DeepSeek V4 peak/off-peak pricing, effective 2026-08-17) ----------
+/** CNY per million tokens; peak = Beijing time 9:00-12:00 ∪ 14:00-18:00 (everything else is off-peak; off-peak = half the peak price) */
 export const PEAK_PRICE = {
   flash: { input: 3.0, output: 9.0, cacheRead: 0.1, reasoning: 9.0 },
   pro: { input: 9.0, output: 27.0, cacheRead: 0.3, reasoning: 27.0 },
@@ -131,19 +131,19 @@ export const OFFPEAK_PRICE = {
   pro: { input: 4.5, output: 13.5, cacheRead: 0.15, reasoning: 13.5 },
 } as const;
 
-/** 北京时间高峰判定（9:00-12:00 ∪ 14:00-18:00） */
+/** Beijing-time peak check (9:00-12:00 ∪ 14:00-18:00) */
 export function isPeakHour(now = new Date()): boolean {
   const h = (now.getUTCHours() + 8) % 24;
   return (h >= 9 && h < 12) || (h >= 14 && h < 18);
 }
 
-/** 按时段取价（默认 flash；model 含 'pro' 取 pro） */
+/** Price for the current period (flash by default; pro if model contains 'pro') */
 export function priceOf(model?: string, now = new Date()) {
   const tier: 'flash' | 'pro' = model && model.toLowerCase().includes('pro') ? 'pro' : 'flash';
   return isPeakHour(now) ? PEAK_PRICE[tier] : OFFPEAK_PRICE[tier];
 }
 
-/** 会话级估算成本（¥，按当前时段价）；无 usage → null */
+/** Estimated session cost (CNY, at the current period's price); no usage → null */
 export function estCost(u?: Usage | null, model?: string): number | null {
   if (!u) return null;
   const p = priceOf(model);
@@ -155,7 +155,7 @@ export function estCost(u?: Usage | null, model?: string): number | null {
   );
 }
 
-/** 会话级缓存命中率 = cacheRead / (cacheRead + input)；无 usage → null（spec §6.2 每回合/每会话聚合） */
+/** Session cache hit rate = cacheRead / (cacheRead + input); no usage → null (spec §6.2 per-turn/per-session aggregation) */
 export function cacheHitOf(u?: Usage | null): number | null {
   if (!u) return null;
   const denom = (u.cacheReadTokens || 0) + (u.inputTokens || 0);
@@ -163,7 +163,7 @@ export function cacheHitOf(u?: Usage | null): number | null {
   return u.cacheReadTokens / denom;
 }
 
-/** 平均缓存命中率（跨当前任务集，会话级数值聚合）；无数据 → null */
+/** Average cache hit rate (across the current task set, aggregated per session); no data → null */
 export function avgCacheHit(tasks: TaskState[], usage: Record<string, Usage>): number | null {
   const hits: number[] = [];
   tasks.forEach((t) => {
@@ -174,15 +174,15 @@ export function avgCacheHit(tasks: TaskState[], usage: Record<string, Usage>): n
   return hits.reduce((a, b) => a + b, 0) / hits.length;
 }
 
-// ---------- 状态推导（红线 2：全部现算，不存储） ----------
-/** 有效状态 = 存储状态（真实 API 无 Waiting；Waiting 属目标契约，服务新增后自然流入） */
+// ---------- State derivation (red line 2: always computed, never stored) ----------
+/** Effective status = stored status (the real API has no Waiting; Waiting belongs to the target contract and flows in naturally once the service adds it) */
 export function effectiveStatus(t: TaskState): TaskStatus | 'Waiting' {
-  // 目标契约：Waiting（待确认）是 approval 缝状态；task.waiting 非空 = 任务停在等待批复
+  // Target contract: Waiting (awaiting confirmation) is the approval-seam state; task.waiting non-null = the task is paused awaiting a decision
   if (t.waiting) return 'Waiting';
   return t.status as TaskStatus | 'Waiting';
 }
 
-/** 卡的最新一次执行（1 卡 N 执行的展示面；exec_order 优先，缺失回退字典序兜底） */
+/** The card's latest execution (the display surface of 1 card N executions; exec_order first, falling back to key order) */
 export function latestExecution(card: CardState | undefined | null): TaskState | null {
   if (!card) return null;
   const order = card.exec_order?.length ? card.exec_order : Object.keys(card.executions);
@@ -190,20 +190,20 @@ export function latestExecution(card: CardState | undefined | null): TaskState |
   return (sid && card.executions[sid]) || null;
 }
 
-/** 卡状态 = 最新执行状态（无执行 = Pending） */
+/** Card status = latest execution status (no execution = Pending) */
 export function cardStatus(card: CardState | undefined | null): TaskStatus | 'Waiting' {
   const t = latestExecution(card);
   return t ? effectiveStatus(t) : 'Pending';
 }
 
-/** 执行代次列表（按 exec_order，缺省字典序） */
+/** Execution generation list (by exec_order, defaulting to key order) */
 export function executionList(card: CardState | undefined | null): TaskState[] {
   if (!card) return [];
   const order = card.exec_order?.length ? card.exec_order : Object.keys(card.executions);
   return order.map((sid) => card.executions[sid]).filter(Boolean);
 }
 
-/** 依赖未完成（目标契约 taskgraph）：每次渲染现算，返回未完成依赖的标题列表。 */
+/** Unfinished dependencies (target contract: taskgraph): computed on every render; returns the titles of unfinished dependencies. */
 export function depsUnmet(t: TaskState, tasksById: Record<string, TaskState>): string[] {
   const deps = t.deps;
   if (!deps || !deps.length) return [];
@@ -213,8 +213,8 @@ export function depsUnmet(t: TaskState, tasksById: Record<string, TaskState>): s
     .map((dep) => dep.title || dep.id);
 }
 
-/** 卡级依赖未完成（§2.1 调度门"等上游"）：卡无执行也算（等上游 = 无执行代次）。
- *  返回未完成依赖的标题列表；依赖卡不存在也计未完成。 */
+/** Card-level unfinished dependencies (§2.1 scheduling gate "waiting on upstream"): also counts when the card has no executions (waiting on upstream = no execution generation).
+ *  Returns the titles of unfinished dependencies; a missing dependency card also counts as unfinished. */
 export function cardUnmet(card: CardState | undefined | null, cardsById: Record<string, CardState>): string[] {
   if (!card?.deps?.length) return [];
   return card.deps
@@ -224,14 +224,14 @@ export function cardUnmet(card: CardState | undefined | null, cardsById: Record<
       const le = latestExecution(dc);
       return !le || effectiveStatus(le) !== 'Done';
     })
-    .map((dc) => dc?.title || '（已删除）');
+    .map((dc) => dc?.title || '(deleted)');
 }
 
-/** 活动摘要文本（看板卡末条/首页正在发生用） */
+/** Activity summary text (used for a board card's last line / "happening now" on the home page) */
 export function activityText(a: Activity): string {
   if ('Reasoning' in a) return a.Reasoning.text;
-  if ('ToolStart' in a) return `工具 · ${a.ToolStart.name}`;
-  if ('ToolResult' in a) return `结果 · ${a.ToolResult.name} · ${a.ToolResult.is_error ? '失败' : '成功'}`;
+  if ('ToolStart' in a) return `Tool · ${a.ToolStart.name}`;
+  if ('ToolResult' in a) return `Result · ${a.ToolResult.name} · ${a.ToolResult.is_error ? 'failed' : 'succeeded'}`;
   return a.Text.text;
 }
 
@@ -250,38 +250,38 @@ export function fmtTime(ms?: number): string {
 export function relTime(ms?: number): string {
   if (ms == null) return '—';
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (s < 60) return s + ' 秒前';
-  if (s < 3600) return Math.floor(s / 60) + ' 分钟前';
-  if (s < 86400) return Math.floor(s / 3600) + ' 小时前';
-  return Math.floor(s / 86400) + ' 天前';
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
 }
 
 export type ConnState = 'online' | 'reconnect' | 'offline';
 
-/** 已完成回复的会话（turn/end 标记）：迟到的 text-chunks 忽略，防流式残留/重复。 */
+/** Sessions whose reply has completed (marked by turn/end): late text-chunks are ignored to prevent streaming leftovers/duplicates. */
 const doneTurns = new Set<string>();
 
 interface ProjectionState {
   projects: Record<string, Project>;
-  cards: Record<string, Record<string, CardState>>;  // pid → cardId → CardState（1 卡 N 执行）
-  /** 简单会话（A 组）：pid → sid → TaskState（独立会话，不进看板） */
+  cards: Record<string, Record<string, CardState>>;  // pid → cardId → CardState (1 card N executions)
+  /** Simple chats (group A): pid → sid → TaskState (standalone chats, not on the board) */
   chats: Record<string, Record<string, TaskState>>;
-  /** 简单会话摘要列表（列表视图用）：pid → ChatSummary[] */
+  /** Simple chat summary list (for the list view): pid → ChatSummary[] */
   chatList: Record<string, api.ChatSummary[]>;
-  usage: Record<string, Usage>;                       // sid → 会话级 usage（WS 累积）
-  /** sid → assistant/chunk 流式文本尾巴（activeSession 边界内累积；重拉后 activities 完整，流式仅 Running 显示） */
+  usage: Record<string, Usage>;                       // sid → session-level usage (accumulated from WS)
+  /** sid → tail of the assistant/chunk streaming text (accumulated within the activeSession boundary; after a refetch the activities are complete, streaming is only shown while Running) */
   streams: Record<string, string>;
-  loading: boolean;                                   // 初始加载
+  loading: boolean;                                   // initial load
   error: string | null;
   conn: ConnState;
-  maxEventSeq: number;                                // WS 事件 seq 水位
-  activeSessionId: string | null;                     // WS session 事件边界（usage 归属）
-  revision: number;                                   // 任何投影变化 +1（视图/防抖刷新订阅用）
+  maxEventSeq: number;                                // WS event seq watermark
+  activeSessionId: string | null;                     // WS session event boundary (usage attribution)
+  revision: number;                                   // +1 on any projection change (subscribed to by views / debounced refresh)
   loadProjects: () => Promise<void>;
   loadProject: (pid: string) => Promise<void>;
   loadCard: (cardId: string) => Promise<void>;
   loadTask: (sid: string) => Promise<void>;
-  /** 简单会话（A 组） */
+  /** Simple chats (group A) */
   loadChats: (pid: string) => Promise<void>;
   loadChat: (sid: string, pid?: string) => Promise<void>;
   createChat: (pid: string) => Promise<string | null>;
@@ -292,17 +292,17 @@ interface ProjectionState {
   promoteChat: (sid: string, input: { title?: string; description?: string }) => Promise<string | null>;
   saveChatToKb: (sid: string, title?: string) => Promise<boolean>;
   createCard: (pid: string, input: api.CreateCardInput) => Promise<string | null>;
-  /** fork：卡上派生新执行代次（from_execution_id 可选）；返回新执行（会话）id */
+  /** fork: derive a new execution generation on a card (from_execution_id optional); returns the new execution (session) id */
   forkExecution: (cardId: string, fromExecutionId?: string) => Promise<string | null>;
-  /** D1.7 需求校准：AI 探索提案验收标准 → 确认 → 写回 criteria；返回校准会话 id */
+  /** D1.7 requirement calibration: AI explores and proposes acceptance criteria → confirm → write back criteria; returns the calibration session id */
   calibrateCard: (cardId: string) => Promise<string | null>;
-  /** 手动标记状态（拖拽/手动标记完成/失败/待办） */
+  /** Mark status manually (drag / manually mark done / failed / to-do) */
   markCardStatus: (cardId: string, status: 'Done' | 'Failed' | 'Pending') => Promise<boolean>;
   cancelTask: (sid: string) => Promise<boolean>;
   postComment: (sid: string, text: string) => Promise<boolean>;
-  /** 显式注册项目（POST /api/projects）→ 刷新项目列表 → 返回注册结果 */
+  /** Register a project explicitly (POST /api/projects) → refresh the project list → return the registration result */
   registerProject: (path: string, name?: string) => Promise<Project | null>;
-  /** 移除项目（archive=仅移除可恢复 / purge=彻底清理）；返回是否成功 */
+  /** Remove a project (archive = recoverable removal / purge = full cleanup); returns whether it succeeded */
   removeProject: (pid: string, mode: 'archive' | 'purge') => Promise<boolean>;
   applyWsEvent: (ev: WsEvent) => void;
   setConn: (s: ConnState) => void;
@@ -344,15 +344,15 @@ export const useProjection = create<ProjectionState>((set, get) => ({
         const projects = { ...s.projects, [pid]: { id: p.id, name: p.name, path: p.path, card_count: Object.keys(p.cards).length } };
         return { cards, projects, error: null };
       });
-      // A 组：顺带加载简单会话（完整 TaskState）
+      // Group A: also load the simple chats (full TaskState)
       try {
         const list = await api.listChats(pid);
         const full: Record<string, TaskState> = {};
         await Promise.all(list.map(async (c) => {
-          try { full[c.session_id] = await api.getChat(c.session_id); } catch { /* 单条失败跳过 */ }
+          try { full[c.session_id] = await api.getChat(c.session_id); } catch { /* skip a single failure */ }
         }));
         set((s) => ({ chats: { ...s.chats, [pid]: full }, chatList: { ...s.chatList, [pid]: list } }));
-      } catch { /* chat 列表失败不阻断卡加载 */ }
+      } catch { /* a failed chat list does not block loading the cards */ }
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -363,7 +363,7 @@ export const useProjection = create<ProjectionState>((set, get) => ({
       const c = await api.getCard(cardId);
       set((s) => {
         const pid = c.project_id || Object.keys(s.cards).find((k) => s.cards[k][cardId]);
-        if (!pid) return { error: `card ${cardId} 归属未知` };
+        if (!pid) return { error: `card ${cardId}: owning project unknown` };
         return { cards: { ...s.cards, [pid]: { ...s.cards[pid], [cardId]: c } } };
       });
     } catch (e) {
@@ -375,16 +375,16 @@ export const useProjection = create<ProjectionState>((set, get) => ({
     try {
       const list = await api.listChats(pid);
       set((s) => ({ chatList: { ...s.chatList, [pid]: list } }));
-    } catch { /* 列表失败不阻断 */ }
+    } catch { /* a failed list does not block anything */ }
   },
 
   loadChat: async (sid, pid) => {
     try {
       const t = await api.getChat(sid);
       set((s) => {
-        // 归属：优先显式 pid，否则反查已有条目
+        // Ownership: prefer the explicit pid, otherwise look it up from existing entries
         const pid2 = pid || Object.keys(s.chats).find((k) => s.chats[k][sid]);
-        if (!pid2) return { error: 'chat 归属未知' };
+        if (!pid2) return { error: 'chat: owning project unknown' };
         return { chats: { ...s.chats, [pid2]: { ...s.chats[pid2], [sid]: t } } };
       });
     } catch (e) {
@@ -406,15 +406,15 @@ export const useProjection = create<ProjectionState>((set, get) => ({
 
   sendChat: async (sid, text) => {
     try {
-      // 显式指定流式归属：WS 的 session 事件只在会话新建时更新 activeSessionId，
-      // 同一会话连续发送会沿用旧值 → 流式拼错会话。发送前钉到当前 sid。
+      // Pin the streaming owner explicitly: the WS session event only updates activeSessionId when a session is created,
+      // so consecutive sends in the same chat would reuse a stale value → streaming text attached to the wrong chat. Pin it to the current sid before sending.
       set({ activeSessionId: sid });
-      // 新一轮开始：清上一轮的完成标记（该会话的 text-chunks 重新生效）
+      // A new round starts: clear the previous round's done marker (this chat's text-chunks take effect again)
       doneTurns.delete(sid);
       await api.sendChat(sid, text);
       set((s) => ({ revision: s.revision + 1 }));
       await get().loadChat(sid);
-      // 流式完成 + REST 回填完成 → 清该会话流式（与 blocks 更新同一 tick，无真空/无重复）
+      // Streaming done + REST backfill done → clear this chat's stream (same tick as the blocks update: no gap, no duplication)
       set((s) => {
         if (!s.streams[sid]) return {};
         const streams = { ...s.streams };
@@ -473,7 +473,7 @@ export const useProjection = create<ProjectionState>((set, get) => ({
     try {
       const r = await api.promoteChat(sid, input);
       set((s) => ({ revision: s.revision + 1 }));
-      // 会话已转卡：刷新项目（卡列表）+ 清掉 chat 摘要
+      // The chat became a card: refresh the project (card list) + clear the chat summary
       const pid = Object.keys(get().chatList).find((k) => get().chats[k]?.[sid]);
       await get().loadProject(pid || 'helmsman');
       return r.card_id;
@@ -498,7 +498,7 @@ export const useProjection = create<ProjectionState>((set, get) => ({
     try {
       const t = await api.getTask(sid);
       set((s) => {
-        // 按 sid 反查所属卡（cards 字典内扫描执行）
+        // Look up the owning card by sid (scan executions in the cards dictionary)
         for (const pid of Object.keys(s.cards)) {
           for (const cardId of Object.keys(s.cards[pid])) {
             if (s.cards[pid][cardId].executions[sid]) {
@@ -516,7 +516,7 @@ export const useProjection = create<ProjectionState>((set, get) => ({
         }
         return {};
       });
-    } catch { /* 单任务拉取失败不阻断整体 */ }
+    } catch { /* a failed single-task fetch does not block the rest */ }
   },
 
   createCard: async (pid, input) => {
@@ -623,13 +623,13 @@ export const useProjection = create<ProjectionState>((set, get) => ({
     }
   },
 
-  // WS 事件折叠（轻量）：session 事件记边界；assistant/message 折叠 usage；其余只抬水位。
-  // 投影本身以 REST 重拉为准（服务 fold 是权威），事件只负责「何时刷新」。
+  // WS event folding (lightweight): session events mark the boundary; assistant/message folds usage; everything else only raises the watermark.
+  // The projection itself is defined by the REST refetch (the service fold is authoritative); events only decide "when to refresh".
   applyWsEvent: (ev) => {
     const patch: Partial<ProjectionState> = {};
     if (ev.type === 'session' && (ev as WsEvent & { id?: string }).id) {
       patch.activeSessionId = (ev as WsEvent & { id: string }).id;
-      // 新执行（会话）入投影由服务端 fold + 防抖重拉承担（卡 id 未知，不做本地占位）。
+      // New executions (sessions) enter the projection via the server fold + debounced refetch (card id unknown, so no local placeholder).
     }
     if (ev.type === 'assistant/chunk') {
       const c = ev.data?.chunk as { type?: string; text?: string } | undefined;
@@ -640,8 +640,8 @@ export const useProjection = create<ProjectionState>((set, get) => ({
         }
       }
     }
-    // 流式正文增量：dsh 实际用 text-chunks 推送（data.texts 逐段），不是 assistant/chunk 的 text-delta。
-    // 只有这一处能拿到"边打字边显示"的效果。已完成回复的会话（turn/end 后）忽略迟到 chunk。
+    // Incremental streaming body: dsh actually pushes text-chunks (data.texts segment by segment), not assistant/chunk text-delta.
+    // This is the only place that gives the "shows up as it types" effect. Late chunks for sessions whose reply has completed (after turn/end) are ignored.
     if (ev.type === 'text-chunks') {
       const texts = (ev.data?.texts as string[] | undefined) ?? [];
       const sid = get().activeSessionId;
@@ -649,17 +649,17 @@ export const useProjection = create<ProjectionState>((set, get) => ({
         patch.streams = { ...get().streams, [sid]: (get().streams[sid] || '') + texts.join('') };
       }
     }
-    // turn/end = 该轮回复完成。只标记（防迟到 chunk 续拼），不清流式——
-    // 清太早会在 REST 回填 blocks 前造成"内容消失再显示"的真空闪烁；
-    // 由 SessionView 的 showStream 相等判断（stream === blocks 最后一条 Text）让位。
+    // turn/end = this round's reply is complete. Only mark it (to stop late chunks from being appended), don't clear the stream ——
+    // clearing too early creates a "content disappears then reappears" flicker before the REST backfill of blocks;
+    // SessionView's showStream equality check (stream === the last Text in blocks) makes it yield instead.
     if (ev.type === 'turn/end') {
       const sid = get().activeSessionId;
       if (sid) doneTurns.add(sid);
     }
     if (ev.type === 'assistant/message' && ev.data?.usage) {
       const u = ev.data.usage as Usage;
-      // 注意：不在 assistant/message 清流式（结束瞬间会闪）——
-      // 由 SessionView 的 showStream 相等判断接管：REST 回填完整消息后流式自然让位。
+      // Note: don't clear the stream on assistant/message (it would flash at the end) ——
+      // SessionView's showStream equality check takes over: once REST backfills the full message, the stream yields naturally.
       if (u.inputTokens || u.outputTokens || u.cacheReadTokens || u.reasoningTokens) {
         const sid = get().activeSessionId;
         if (sid) {
@@ -687,8 +687,8 @@ export const useProjection = create<ProjectionState>((set, get) => ({
   bump: () => set((s) => ({ revision: s.revision + 1 })),
 }));
 
-/** 同步目标：当前视图需要拉的数据（pid 与 openId 由 UI store 提供，防抖后调用）。
- *  待注册项目（本地 pending）服务端 404，跳过拉取；首张卡 POST 后由服务注册。 */
+/** Sync targets: the data the current view needs to fetch (pid and openId come from the UI store; called after debouncing).
+ *  Projects pending registration (local pending) return 404 from the server, so fetching is skipped; the service registers them after the first card is POSTed. */
 export function refreshTargets(pid: string | null, openId: string | null, home: boolean) {
   const p = useProjection.getState();
   if (home || !pid) {
@@ -700,5 +700,5 @@ export function refreshTargets(pid: string | null, openId: string | null, home: 
   if (openId) p.loadCard(openId);
 }
 
-// 延迟引用避免循环 import（ui store 引用 projection 的类型）
+// Deferred reference to avoid a circular import (the ui store references projection's types)
 import { useUi as useUiStoreRef } from './ui';

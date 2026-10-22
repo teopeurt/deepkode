@@ -1,6 +1,6 @@
-// 职责：代码块（Beautiful UI「Code Block」移植，MIT © Shane Levine）——
-//   带行号的 listing；若内容是 unified diff（或 fence 语言为 diff）可切 Code / Diff。
-//   纯展示；复制走 clipboard，失败由调用方 toast（onCopyError）。
+// Responsibility: code block (port of Beautiful UI's "Code Block", MIT © Shane Levine) ——
+//   a listing with line numbers; if the content is a unified diff (or the fence language is diff) you can switch between Code / Diff.
+//   Display only; copying uses the clipboard, and the caller toasts on failure (onCopyError).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { highlightLine } from './highlight';
 
@@ -80,7 +80,7 @@ interface Props {
   code: string;
   info?: string;
   onCopyError?: () => void;
-  /** 是否显示行号列（默认 true；文件预览等浏览场景可关） */
+  /** Whether to show the line-number column (default true; can be turned off for browsing scenarios like file preview) */
   lines?: boolean;
 }
 
@@ -120,7 +120,7 @@ export function CodeBlock({ code, info = '', onCopyError, lines = true }: Props)
             </span>
           ) : null}
           <button type="button" className={'codeblock-copy' + (copied ? ' on' : '')} onClick={() => void copy()}>
-            {copied ? '已复制' : '复制'}
+            {copied ? 'Copied' : 'Copy'}
           </button>
         </span>
       </div>

@@ -1,7 +1,7 @@
-// 职责：建卡模态（M2.3，O1=B）—— 卡 = 资产：目标（一句话）+ 类型（需求/缺陷/任务）+
-// 需求描述（卡 description）+ 里程碑（属性，P1 筛选）+ 备注 + 预设 Profile（三轴组合）+
-// 依赖（目标契约 taskgraph：完成本卡前需先完成的卡）。
-// POST /api/projects/:pid/cards {title, description, kind, milestone, preset_id, deps}：建卡即自动跑首代执行。
+// Responsibility: new-card modal (M2.3, O1=B) —— card = asset: goal (one sentence) + type (requirement/defect/task) +
+// requirement description (card description) + milestone (attribute, P1 filtering) + notes + preset profile (three-axis combination) +
+// dependencies (target contract taskgraph: cards that must be completed before this one).
+// POST /api/projects/:pid/cards {title, description, kind, milestone, preset_id, deps}: creating a card automatically runs its first execution.
 import { useEffect, useState } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
@@ -11,9 +11,9 @@ import { listProfiles, MODE_LABEL, SETTING_LABEL, APPROVAL_LABEL, SANDBOX_LABEL,
 import { StatusPill } from '../StatusPill';
 
 const KINDS: { value: string; label: string }[] = [
-  { value: 'requirement', label: '需求' },
-  { value: 'bug', label: '缺陷' },
-  { value: 'task', label: '任务' },
+  { value: 'requirement', label: 'Requirement' },
+  { value: 'bug', label: 'Defect' },
+  { value: 'task', label: 'Task' },
 ];
 
 export function NewTaskModal() {
@@ -36,18 +36,18 @@ export function NewTaskModal() {
   const [busy, setBusy] = useState(false);
   const peak = isPeakHour();
   const cards = useProjection((s) => (pid ? s.cards[pid] || {} : {}));
-  // 已完成的卡不挡启动，勾了没有调度意义，不进列表。
+  // Completed cards don't block starting; checking them has no scheduling meaning, so they are left out of the list.
   const depOptions = Object.values(cards)
     .filter((c) => { const st = cardStatus(c); return st !== 'Done' && st !== 'Cancelled'; })
     .sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0));
-  // §2.1 调度门：所选依赖若未完成 → 卡将"等上游"，不自动执行（解锁后自动启动）
+  // §2.1 scheduling gate: if a selected dependency is unfinished → the card will be "waiting on upstream" and won't run automatically (it starts automatically once unblocked)
   const hasUnmetDep = depIds.some((d) => {
     const dc = cards[d];
     const le = dc ? latestExecution(dc) : null;
     return !le || cardStatus(dc) !== 'Done';
   });
 
-  // 打开时加载项目 Profile（默认项预填 —— 用户可见，§2.6"建卡预填"）
+  // Load the project's profiles when opening (the default is pre-selected —— visible to the user, §2.6 "pre-filled at card creation")
   useEffect(() => {
     if (!open || !pid) return;
     void listProfiles(pid).then((ps) => {
@@ -60,10 +60,10 @@ export function NewTaskModal() {
   const submit = async () => {
     if (!pid || !title.trim() || busy) return;
     setBusy(true);
-    // 备注并入描述（首条上下文；卡 = 资产，描述 = 需求描述）
+    // Notes are merged into the description (first context; card = asset, description = requirement description)
     const desc = note.trim() ? (description.trim() ? `${description.trim()}
 
-备注：${note.trim()}` : `备注：${note.trim()}`) : description.trim();
+Notes: ${note.trim()}` : `Notes: ${note.trim()}`) : description.trim();
     const cardId = await createCard(pid, {
       title: title.trim(),
       description: desc,
@@ -76,7 +76,7 @@ export function NewTaskModal() {
     });
     setBusy(false);
     if (cardId) {
-      toast(calibrate ? '卡已创建，先跑需求校准（AI 提案验收标准 → 你确认 → 再执行）' : '卡已创建，引擎自动跑首代执行');
+      toast(calibrate ? 'Card created; running requirement calibration first (AI proposes acceptance criteria → you confirm → then it runs)' : 'Card created; the engine runs its first execution automatically');
       setOpen(false);
       setTitle('');
       setKind('task');
@@ -87,25 +87,25 @@ export function NewTaskModal() {
       setCalibrate(false);
       setBudget('');
     } else {
-      toast('创建失败，见错误横幅');
+      toast('Creation failed, see the error banner');
     }
   };
 
   return (
     <Modal open={open} onClose={() => setOpen(false)}>
-      <h3>新建卡（资产）</h3>
+      <h3>New card (asset)</h3>
       <div className="field">
-        <label>目标</label>
+        <label>Goal</label>
         <input
           autoFocus
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="一句话描述需求/缺陷"
+          placeholder="Describe the requirement/defect in one sentence"
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) submit(); }}
         />
       </div>
       <div className="field">
-        <label>类型</label>
+        <label>Type</label>
         <div className="kind-opts">
           {KINDS.map((k) => (
             <span
@@ -117,39 +117,39 @@ export function NewTaskModal() {
         </div>
       </div>
       <div className="field">
-        <label>里程碑（可选 · P1 筛选维度，属性现在就存）</label>
+        <label>Milestone (optional · P1 filter dimension; the attribute is stored now)</label>
         <input
           value={milestone}
           onChange={(e) => setMilestone(e.target.value)}
-          placeholder="如 v0.2"
+          placeholder="e.g. v0.2"
         />
       </div>
       <div className="field">
-        <label>预设 Profile（三轴组合 · 策略可见）</label>
+        <label>Preset profile (three-axis combination · policy is visible)</label>
         <select value={presetId} onChange={(e) => setPresetId(e.target.value)}>
           {profiles.map((p) => (
-            <option key={p.id} value={p.id} title={`${MODE_LABEL[p.mode]} · ${SETTING_LABEL[p.setting]} · ${APPROVAL_LABEL[p.approval]} · 沙箱 ${SANDBOX_LABEL[p.sandbox]}`}>
-              {p.name}{p.is_default ? '（默认）' : ''}
+            <option key={p.id} value={p.id} title={`${MODE_LABEL[p.mode]} · ${SETTING_LABEL[p.setting]} · ${APPROVAL_LABEL[p.approval]} · sandbox ${SANDBOX_LABEL[p.sandbox]}`}>
+              {p.name}{p.is_default ? ' (default)' : ''}
             </option>
           ))}
         </select>
-        <div className="ph-hint2" style={{ marginTop: 4 }}>预设 = 协作方式 × 执行设定 × 审批姿态 · 沙箱（悬停选项看明细；执行启动时快照，不改）。</div>
+        <div className="ph-hint2" style={{ marginTop: 4 }}>Preset = collaboration mode × execution setting × approval posture · sandbox (hover an option for details; snapshotted when the execution starts and not changed).</div>
       </div>
       <div className="field">
-        <label>上游（可选 · 谁先做完，这张卡才开跑）</label>
+        <label>Upstream (optional · which cards must finish before this one starts)</label>
         {depOptions.length === 0 ? (
           <div className="ph-hint2" style={{ padding: '6px 0' }}>
             {Object.keys(cards).length === 0
-              ? '项目还没有卡 —— 先建一张，后面的卡才能等它。'
-              : '现有卡都已完成，没有要等的上游。'}
+              ? 'The project has no cards yet —— create one first so later cards can wait on it.'
+              : 'All existing cards are done; there is no upstream to wait on.'}
           </div>
         ) : (
           <div className="dep-pick">
             {depOptions.map((c) => {
               const st = cardStatus(c);
               const checked = depIds.includes(c.id);
-              const name = (c.title || '').trim() || '未命名';
-              const kind = KINDS.find((k) => k.value === c.kind)?.label ?? c.kind ?? '任务';
+              const name = (c.title || '').trim() || 'Untitled';
+              const kind = KINDS.find((k) => k.value === c.kind)?.label ?? c.kind ?? 'Task';
               const blurb = (c.description || '').replace(/\s+/g, ' ').trim();
               return (
                 <div
@@ -176,39 +176,39 @@ export function NewTaskModal() {
         )}
         {hasUnmetDep ? (
           <div className="ph-hint2" style={{ marginTop: 4, color: 'var(--yellow)' }}>
-            ⏳ 所选依赖未完成 —— 卡将"等上游"，不自动执行；上游完成时自动启动。
+            ⏳ A selected dependency is unfinished —— the card will be "waiting on upstream" and won't run automatically; it starts automatically when the upstream completes.
           </div>
         ) : null}
       </div>
       <div className="field">
-        <label>需求描述</label>
-        <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="可选：验收标准/约束/上下文（可勾选下方先校准，让 AI 提案验收标准）" />
+        <label>Requirement description</label>
+        <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional: acceptance criteria / constraints / context (check calibration below to have the AI propose acceptance criteria)" />
       </div>
       <label className="calibrate-opt" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, margin: '4px 0 10px', cursor: 'pointer' }}>
         <input type="checkbox" checked={calibrate} onChange={(e) => setCalibrate(e.target.checked)} />
-        <span>先校准需求（D1.7）：AI 探索后提案验收标准 → 你确认 → 自动写回 → 再执行</span>
+        <span>Calibrate the requirement first (D1.7): the AI explores and proposes acceptance criteria → you confirm → written back automatically → then it runs</span>
       </label>
       <div className="field">
-        <label>执行预算 ¥（可选 · opt-in 预算门，超支挂起等批复）</label>
+        <label>Execution budget ¥ (optional · opt-in budget gate; overspending suspends it awaiting approval)</label>
         <input
           type="number" min="0" step="0.1"
           value={budget}
           onChange={(e) => setBudget(e.target.value)}
-          placeholder="如 1（¥）—— 超支 Waiting{cost}，批准=接受成本 / 拒绝=停止"
+          placeholder="e.g. 1 (¥) —— overspend → Waiting{cost}; approve = accept the cost / reject = stop"
         />
         {peak ? (
           <div className="ph-hint2" style={{ marginTop: 4, color: 'var(--yellow)' }}>
-            ⏰ 当前为高峰时段（北京 9-12 / 14-18 点）—— 成本 ×2。非紧急可等空闲时段跑。
+            ⏰ It is currently peak hours (Beijing 9-12 / 14-18) —— cost ×2. If it isn't urgent, wait for off-peak hours.
           </div>
         ) : null}
       </div>
       <div className="field">
-        <label>备注（作为首条执行上下文）</label>
-        <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="可选" />
+        <label>Notes (used as the first execution context)</label>
+        <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" />
       </div>
       <div className="modal-actions">
-        <Button variant="quiet" onClick={() => setOpen(false)}>取消</Button>
-        <Button variant="primary" disabled={!title.trim() || busy} onClick={submit}>创建并执行</Button>
+        <Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button>
+        <Button variant="primary" disabled={!title.trim() || busy} onClick={submit}>Create and run</Button>
       </div>
     </Modal>
   );

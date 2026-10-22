@@ -1,6 +1,6 @@
-// 职责：主题状态（选择/氛围档位，localStorage 持久化）+ ThemeProvider —— CSSOM 注入全部语义 token。
-// 注入逻辑与 taskboard-v9 applyTheme 一致：documentElement.style.setProperty 逐键写入；
-// 'system' 跟随 prefers-color-scheme（监听变化）；持久化键与原型一致（helmsman-theme / helmsman-atmo）。
+// Responsibility: theme state (selection / atmosphere level, persisted in localStorage) + ThemeProvider —— injects all semantic tokens via the CSSOM.
+// Injection logic matches taskboard-v9 applyTheme: documentElement.style.setProperty key by key;
+// 'system' follows prefers-color-scheme (listens for changes); persistence keys match the prototype (helmsman-theme / helmsman-atmo).
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { TK_MAP, findTheme, SYSTEM_THEME_ID, type Theme } from './themes';
@@ -36,7 +36,7 @@ export function applyRadius(n: number) {
 interface ThemeState {
   themeId: string; // 'mist' | 'night' | ... | 'system'
   atmo: AtmoLevel;
-  /** --r-md 基准（px），连带 --r-sm / --r-lg */
+  /** --r-md base (px), with --r-sm / --r-lg derived from it */
   radius: number;
   setTheme: (id: string) => void;
   setAtmo: (level: AtmoLevel) => void;
@@ -62,7 +62,7 @@ export const useThemeStore = create<ThemeState>((set) => ({
   },
 }));
 
-/** 注入一套主题的全部 token 到 documentElement（CSSOM），并打 data-theme 标记 */
+/** Inject all tokens of a theme into documentElement (CSSOM) and set the data-theme marker */
 export function applyTokens(th: Theme) {
   const r = document.documentElement.style;
   (Object.keys(TK_MAP) as (keyof typeof TK_MAP)[]).forEach((k) => {
@@ -71,7 +71,7 @@ export function applyTokens(th: Theme) {
   document.documentElement.dataset.theme = th.id;
 }
 
-/** 解析当前生效的主题（含 system 跟随） */
+/** Resolve the currently effective theme (including following the system) */
 function resolveTheme(themeId: string): Theme {
   return findTheme(themeId);
 }
@@ -85,14 +85,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => resolveTheme(themeId));
   const [skin, setSkin] = useState<UserSkin | null>(() => getActiveSkin());
 
-  // 内置主题 token 注入（基础层；皮肤 token 覆盖在其上，见下方 applySkin）
+  // Built-in theme token injection (base layer; skin tokens are layered on top, see applySkin below)
   useEffect(() => {
     applyTokens(theme);
   }, [theme]);
 
-  // 皮肤注入：token 覆盖 + css + 背景。激活皮肤时每次主题/皮肤变化都重新应用
-  // （皮肤 token 需要压在最新内置主题之上；css/背景独立于内置主题）。
-  // 还原（skin=null）时先清皮肤注入，再重放内置主题 token（皮肤覆盖过的键归位）。
+  // Skin injection: token overrides + css + background. While a skin is active it is reapplied on every theme/skin change
+  // (skin tokens must sit on top of the latest built-in theme; css/background are independent of the built-in theme).
+  // On restore (skin=null), clear the skin injection first, then replay the built-in theme tokens (keys the skin overrode are restored).
   useEffect(() => {
     if (skin) {
       applyTokens(theme);
@@ -103,7 +103,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [skin, theme]);
 
-  // 外部切换皮肤（ThemePicker 导入/选择后调用 setSkin 由本组件暴露）
+  // External skin switching (ThemePicker calls setSkin, exposed by this component, after import/selection)
   useEffect(() => {
     const onStorage = () => setSkin(getActiveSkin());
     window.addEventListener('helmsman-skin-changed', onStorage);
@@ -118,7 +118,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setTheme(resolveTheme(themeId));
   }, [themeId]);
 
-  // system 主题跟随系统明暗切换
+  // The system theme follows the OS light/dark switch
   useEffect(() => {
     if (themeId !== SYSTEM_THEME_ID) return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -131,7 +131,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-/** 激活/取消皮肤（ThemePicker 用；触发 helmsman-skin-changed 让 Provider 应用）。 */
+/** Activate/deactivate a skin (used by ThemePicker; fires helmsman-skin-changed so the Provider applies it). */
 export function activateSkin(id: string | null): void {
   setActiveSkin(id);
   window.dispatchEvent(new Event('helmsman-skin-changed'));

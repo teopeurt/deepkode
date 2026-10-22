@@ -1,6 +1,6 @@
-// 职责：WS 客户端 —— /api/events 事件镜像订阅：指数退避重连（1s→2s→4s→…封顶 30s）、
-// 连接状态通知、事件回调。真实服务广播全部会话的原始 dsh 日志事件（{type,seq,time,data}，
-// 仅 session 事件自带会话 id）；前端以事件为「变化信号」驱动投影刷新，重连后按 last_seq 追平（REST 重拉）。
+// Responsibility: WS client —— subscribes to the /api/events event mirror: exponential-backoff reconnect (1s→2s→4s→… capped at 30s),
+// connection-state notifications, event callbacks. The real service broadcasts the raw dsh log events of all sessions ({type,seq,time,data},
+// only session events carry a session id); the frontend uses events as "change signals" to refresh the projection, and after reconnecting catches up by last_seq (REST refetch).
 import type { WsEvent } from '../store/projection';
 
 export type ConnState = 'online' | 'reconnect';
@@ -8,9 +8,9 @@ export type ConnState = 'online' | 'reconnect';
 export interface EventsClientOpts {
   url?: string;
   onEvent: (ev: WsEvent) => void;
-  /** 断连/重连状态变化（online / reconnect） */
+  /** Disconnect/reconnect state changes (online / reconnect) */
   onState: (s: ConnState) => void;
-  /** 成功重连后回调（前端借此按 last_seq 追平：重拉当前投影） */
+  /** Called after a successful reconnect (the frontend uses it to catch up by last_seq: refetch the current projection) */
   onReconnect?: () => void;
 }
 
@@ -51,7 +51,7 @@ export class EventsClient {
       try {
         this.opts.onEvent(JSON.parse(String(e.data)) as WsEvent);
       } catch {
-        /* 忽略无法解析的帧 */
+        /* ignore frames that cannot be parsed */
       }
     };
     this.ws.onclose = () => {
@@ -59,7 +59,7 @@ export class EventsClient {
       if (!this.closed) this.scheduleReconnect();
     };
     this.ws.onerror = () => {
-      // onclose 随后触发统一重连
+      // onclose fires afterwards and handles reconnection uniformly
       try { this.ws?.close(); } catch { /* ignore */ }
     };
   }

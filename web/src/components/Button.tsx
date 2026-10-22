@@ -1,4 +1,4 @@
-// 职责：Button —— fill（primary）/ plain / quiet / icon / mini 五种变体（原型 .btn 体系）。
+// Responsibility: Button —— five variants: fill (primary) / plain / quiet / icon / mini (the prototype's .btn system).
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 type Variant = 'primary' | 'plain' | 'quiet' | 'icon' | 'ghost';

@@ -1,14 +1,14 @@
-// 职责：划词操作条（Beautiful UI「Selection Actions」移植，MIT © Shane Levine）——
-//   选中一段文字后浮出 Explain / Improve / Shorten / Tone / Grammar，把选区交给 agent。
-//   纯 UI：动作经 onAction 上抛，调用方填进 PromptBar（不自动发送）。
+// Responsibility: text-selection action bar (port of Beautiful UI's "Selection Actions", MIT © Shane Levine) ——
+//   after selecting some text, Explain / Improve / Shorten / Tone / Grammar float up and hand the selection to the agent.
+//   Pure UI: actions are passed up via onAction, and the caller fills them into the PromptBar (not sent automatically).
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 export const SELECT_ACTIONS = [
-  { id: 'explain', label: '解释' },
-  { id: 'improve', label: '改进' },
-  { id: 'shorten', label: '缩短' },
-  { id: 'tone', label: '语气' },
-  { id: 'grammar', label: '语法' },
+  { id: 'explain', label: 'Explain' },
+  { id: 'improve', label: 'Improve' },
+  { id: 'shorten', label: 'Shorten' },
+  { id: 'tone', label: 'Tone' },
+  { id: 'grammar', label: 'Grammar' },
 ] as const;
 
 export type SelectActionId = (typeof SELECT_ACTIONS)[number]['id'];
@@ -16,11 +16,11 @@ export type SelectActionId = (typeof SELECT_ACTIONS)[number]['id'];
 export function promptFromSelection(kind: SelectActionId, text: string): string {
   const q = text.trim();
   switch (kind) {
-    case 'explain': return `请解释这段：\n\n> ${q}`;
-    case 'improve': return `请改进这段：\n\n> ${q}`;
-    case 'shorten': return `请缩短这段，保留要点：\n\n> ${q}`;
-    case 'tone': return `请调整这段语气，使其更清晰专业：\n\n> ${q}`;
-    case 'grammar': return `请修正这段的语法和用词：\n\n> ${q}`;
+    case 'explain': return `Please explain this:\n\n> ${q}`;
+    case 'improve': return `Please improve this:\n\n> ${q}`;
+    case 'shorten': return `Please shorten this, keeping the key points:\n\n> ${q}`;
+    case 'tone': return `Please adjust the tone of this to be clearer and more professional:\n\n> ${q}`;
+    case 'grammar': return `Please fix the grammar and wording of this:\n\n> ${q}`;
   }
 }
 

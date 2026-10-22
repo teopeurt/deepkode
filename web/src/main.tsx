@@ -1,4 +1,4 @@
-// 职责：入口 —— 挂载 App 与全局样式。
+// Responsibility: entry point —— mounts App and the global styles.
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles/base.css';

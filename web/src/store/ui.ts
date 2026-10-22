@@ -1,5 +1,5 @@
-// 职责：UI 路由/导航 store —— 三段式导航状态 + 模态开关 + toast。
-// hash 路由契约与原型一致： #pid=&view=&open=&tab= （view: home|projhome|kanban|chat|graph|kb|files）。
+// Responsibility: UI routing/navigation store —— three-pane navigation state + modal toggles + toasts.
+// The hash-routing contract matches the prototype: #pid=&view=&open=&tab= (view: home|projhome|kanban|chat|graph|kb|files).
 import { create } from 'zustand';
 
 export type ViewId = 'home' | 'projhome' | 'kanban' | 'chat' | 'sessions' | 'graph' | 'kb' | 'files' | 'metrics' | 'experiment' | 'approvals';
@@ -15,14 +15,14 @@ interface UiState {
   view: ViewId;
   openId: string | null;
   tab: DrawerTab;
-  /** 会话钻入全屏页：session id（hash `t=` 参数；非空 = 渲染 SessionDetailView） */
+  /** Session drill-in full-screen page: session id (hash `t=` param; non-null = render SessionDetailView) */
   sessionId: string | null;
   sideOpen: boolean;
   sideQ: string;
   settingsOpen: boolean;
   newTaskOpen: boolean;
   dirOpen: boolean;
-  /** 本地待注册项目（离线兜底；刷新持久化。服务端显式注册后移除） */
+  /** Local projects pending registration (offline fallback; persisted across reloads. Removed once the server registers them explicitly) */
   pendingProjects: Record<string, { id: string; name: string; path: string }>;
   toasts: ToastItem[];
   setRoute: (p: Partial<Pick<UiState, 'pid' | 'view' | 'openId' | 'tab' | 'sessionId'>>) => void;
@@ -88,7 +88,7 @@ export const useUi = create<UiState>((set, get) => ({
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
 
-/** 把当前路由写入 hash（契约：#pid=&view=&open=&tab=&t=） */
+/** Write the current route into the hash (contract: #pid=&view=&open=&tab=&t=) */
 export function writeHash(pid: string | null, view: ViewId, openId: string | null, tab: DrawerTab, sessionId?: string | null) {
   const params: string[] = [];
   if (pid) params.push('pid=' + encodeURIComponent(pid));
@@ -97,14 +97,14 @@ export function writeHash(pid: string | null, view: ViewId, openId: string | nul
   if (tab && tab !== 'comments') params.push('tab=' + tab);
   if (sessionId) params.push('t=' + encodeURIComponent(sessionId));
   const h = params.length ? '#' + params.join('&') : '#';
-  // 必须触发 hashchange（App 监听它 parseHash → 更新 store → 重渲染）：
-  // history.replaceState 只改地址栏不触发事件，是"点返回没反应"的根因。
+  // Must trigger hashchange (App listens for it: parseHash → update the store → re-render):
+  // history.replaceState only changes the address bar without firing the event, which was the root cause of "clicking back does nothing".
   if (location.hash !== h) location.hash = h;
 }
 
-/** 跳会话钻入全屏页：#pid=&t=<sid>（保留 view 以便返回）
- *  进入会话时清 openId：抽屉自动关闭，会话全屏独立——不再"会话+抽屉叠着"，
- *  抽屉 × 也不会连带关掉会话。 */
+/** Jump to the session drill-in full-screen page: #pid=&t=<sid> (keeps view so we can go back)
+ *  Clear openId when entering a session: the drawer closes automatically and the session is full-screen on its own —— no more "session + drawer stacked",
+ *  and the drawer's × no longer closes the session along with it. */
 export function openSession(pid: string, sid: string, view: ViewId, cardId: string | null) {
   useUi.getState().setRoute({ sessionId: sid, openId: null, pid });
   writeHash(pid, view, null, 'comments', sid);

@@ -1,5 +1,5 @@
-// 职责：App —— 三段式布局装配 + hash 路由（#pid=&view=&open=&tab=，契约与原型一致）+ WS 订阅。
-// 数据流：REST 拉取快照 → 本地投影 → WS 事件防抖刷新（按 last_seq 增量追平）；用户动作 POST → 引擎裁决 → 事件回流。
+// Responsibility: App —— assembles the three-pane layout + hash routing (#pid=&view=&open=&tab=, contract matches the prototype) + WS subscription.
+// Data flow: REST snapshot fetch → local projection → debounced refresh on WS events (incremental catch-up by last_seq); user actions POST → engine decides → events flow back.
 import { useEffect, useRef, useState } from 'react';
 import { ThemeProvider, useThemeStore } from './theme/ThemeProvider';
 import { Atmosphere } from './theme/Atmosphere';
@@ -30,21 +30,21 @@ import { ApprovalsView } from './views/ApprovalsView';
 import { SessionDetailView } from './views/SessionDetailView';
 
 const VIEW_ITEMS: { id: ViewId; label: string; icon: IconName }[] = [
-  { id: 'projhome', label: '首页', icon: 'home' },
-  { id: 'kanban', label: '看板', icon: 'board' },
-  { id: 'chat', label: '会话', icon: 'chat' },
-  { id: 'sessions', label: '会话记录', icon: 'chat' },
-  { id: 'graph', label: '图', icon: 'graph' },
-  { id: 'kb', label: '知识库', icon: 'kb' },
-  { id: 'files', label: '文件', icon: 'folder' },
-  { id: 'metrics', label: '度量', icon: 'graph' },
-  // 实验（对照实验 A/B）暂隐藏：v2 迁移时为简化版（B 组恒空、compare 契约未对齐），
-  // 后期补全 compareGroup/compareReport 后恢复——加回本行即可（组件/路由/端点均保留）。
-  // { id: 'experiment', label: '实验', icon: 'graph' },
-  { id: 'approvals', label: '批复', icon: 'lock' },
+  { id: 'projhome', label: 'Home', icon: 'home' },
+  { id: 'kanban', label: 'Board', icon: 'board' },
+  { id: 'chat', label: 'Chat', icon: 'chat' },
+  { id: 'sessions', label: 'History', icon: 'chat' },
+  { id: 'graph', label: 'Graph', icon: 'graph' },
+  { id: 'kb', label: 'Knowledge', icon: 'kb' },
+  { id: 'files', label: 'Files', icon: 'folder' },
+  { id: 'metrics', label: 'Metrics', icon: 'graph' },
+  // Experiment (A/B control experiment) is hidden for now: the v2 migration shipped a simplified version (group B always empty, compare contract not aligned);
+  // restore it once compareGroup/compareReport are completed —— just add this line back (the component/route/endpoint are all kept).
+  // { id: 'experiment', label: 'Experiment', icon: 'graph' },
+  { id: 'approvals', label: 'Approvals', icon: 'lock' },
 ];
 
-/** 解析 hash（#pid=&view=&open=&tab= + theme 兼容原型） */
+/** Parse the hash (#pid=&view=&open=&tab= + theme, compatible with the prototype) */
 function parseHash() {
   const h = (location.hash || '').slice(1);
   if (!h) return;
@@ -73,7 +73,7 @@ function Toolbar({ pid }: { pid: string }) {
     useUi.getState().setRoute({ view: v, openId: null, tab: 'comments', sessionId: null });
     writeHash(pid, v, null, 'comments');
   };
-  // 药丸滑动指示器：测激活按钮位置 → 绝对定位 pill（CSS transition 弹性滑动）
+  // Sliding pill indicator: measure the active button's position → absolutely positioned pill (CSS transition for an elastic slide)
   const listRef = useRef<HTMLDivElement>(null);
   const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
@@ -113,7 +113,7 @@ function Toolbar({ pid }: { pid: string }) {
           </button>
         ))}
       </div>
-      <span className="hint">运行中 / 待确认的卡片锁死，只能通过评论控制</span>
+      <span className="hint">Running / awaiting-confirmation cards are locked and can only be controlled through comments</span>
     </div>
   );
 }
@@ -125,7 +125,7 @@ export default function App() {
   const openId = useUi((s) => s.openId);
   const sessionId = useUi((s) => s.sessionId);
 
-  // 进入项目 → 主动拉取任务详情（列表/详情分离：列表轻量，激活项目才加载任务）
+  // Entering a project → fetch task details proactively (list/detail split: the list is lightweight; tasks load only for the active project)
   useEffect(() => {
     if (!pid) return;
     const { pendingProjects } = useUi.getState();
@@ -134,7 +134,7 @@ export default function App() {
   const revision = useProjection((s) => s.revision);
   const error = useProjection((s) => s.error);
 
-  // 启动：初始拉取 + hash 直达 + WS 订阅（断连指数退避重连，重连后按 last_seq 追平）
+  // Startup: initial fetch + direct hash navigation + WS subscription (exponential-backoff reconnect on disconnect; catch up by last_seq after reconnecting)
   useEffect(() => {
     const boot = async () => {
       await useProjection.getState().loadProjects();
@@ -153,7 +153,7 @@ export default function App() {
       onReconnect: () => {
         const { pid: p2, openId: o2, view: v2 } = useUi.getState();
         refreshTargets(p2, o2, v2 === 'home');
-        useUi.getState().toast('已重连 · last_seq 追平');
+        useUi.getState().toast('Reconnected · caught up via last_seq');
       },
     });
     client.connect();
@@ -165,7 +165,7 @@ export default function App() {
     };
   }, []);
 
-  // WS 事件（revision 变化）→ 防抖刷新当前目标（增量追平；不制造循环：load* 不再 bump revision）
+  // WS events (revision change) → debounced refresh of the current target (incremental catch-up; no loop: load* no longer bumps revision)
   useEffect(() => {
     if (revision === 0) return;
     const t = setTimeout(() => {
@@ -190,7 +190,7 @@ export default function App() {
               <div className="toolbar" style={{ paddingTop: 0 }}>
                 <div className="banner err" style={{ marginBottom: 0, flex: 1 }}>
                   {error}
-                  <Button mini onClick={() => useProjection.getState().bump()} style={{ marginLeft: 10 }}>重试</Button>
+                  <Button mini onClick={() => useProjection.getState().bump()} style={{ marginLeft: 10 }}>Retry</Button>
                 </div>
               </div>
             ) : null}

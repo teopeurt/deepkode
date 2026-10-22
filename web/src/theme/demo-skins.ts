@@ -1,12 +1,12 @@
-// 职责：示例皮肤包（Skin System v2 demo）—— 展示两种换装能力：
-//   1.「鲸」：token 覆盖皮肤（深海蓝金，呼应品牌 🐳）—— 只改色板，几行数据
-//   2.「宣纸」：彻底变装（theme.css）—— 改字体/圆角/侧栏/卡片，可见"换了一个产品"
-// 用法：设置 → 主题 → 导入皮肤（web/src/theme/demo-skins/ 下文件），或直接用下方 JSON。
+// Responsibility: sample skin packs (Skin System v2 demo) —— showcase two kinds of makeover:
+//   1. "Whale": a token-override skin (deep-sea blue and gold, echoing the 🐳 brand) —— only changes the palette, a few lines of data
+//   2. "Rice paper": a full makeover (theme.css) —— changes fonts / radius / sidebar / cards, visibly "a different product"
+// Usage: Settings → Theme → import skin (files under web/src/theme/demo-skins/), or use the JSON below directly.
 import type { UserSkin } from './skin';
 
 export const WHALE_SKIN: UserSkin = {
   id: 'demo-whale',
-  name: '鲸 · 深海蓝金',
+  name: 'Whale · Deep-sea blue & gold',
   tokens: {
     canvas: '#0A1424',
     surface: '#101D33',
@@ -39,9 +39,9 @@ export const WHALE_SKIN: UserSkin = {
 
 export const PAPER_SKIN: UserSkin = {
   id: 'demo-paper',
-  name: '宣纸 · 彻底变装',
+  name: 'Rice paper · Full makeover',
   css: `
-/* 宣纸皮肤：字体 + 圆角 + 侧栏 + 卡片的彻底变装 demo */
+/* Rice-paper skin: a full-makeover demo of fonts + radius + sidebar + cards */
 :root {
   --font: "Songti SC", "STSong", "Noto Serif SC", Georgia, serif;
   --mono: "SF Mono", "Songti SC", monospace;
@@ -64,7 +64,7 @@ h1, h2, h3, .kt, .appr-title { font-weight: 600 !important; }
   createdAt: 0,
 };
 
-/** 示例皮肤 JSON（可直接存成 theme.json 导入） */
+/** Sample skin JSON (can be saved directly as theme.json and imported) */
 export const DEMO_JSON = (skin: UserSkin): string => JSON.stringify({
   id: skin.id,
   name: skin.name,

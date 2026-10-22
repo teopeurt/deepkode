@@ -1,5 +1,5 @@
-// 职责：思考折叠（Beautiful UI「Thinking」移植，MIT © Shane Levine）——
-//   四种形态：步骤 / 推理 / 检索 / 编码。页签只露出当前组真实有的形态，不是假切换。
+// Responsibility: collapsible thinking (port of Beautiful UI's "Thinking", MIT © Shane Levine) ——
+//   four forms: steps / reasoning / search / coding. Tabs only expose the forms the current group actually has —— not a fake switch.
 import { useMemo, useState, type ReactNode } from 'react';
 
 export type ThinkRowKind = 'think' | 'tool' | 'text';
@@ -8,25 +8,25 @@ export type ThinkVariant = 'steps' | 'reasoning' | 'search' | 'coding';
 export interface ThinkRow {
   id: string | number;
   kind: ThinkRowKind;
-  /** think/text 行的内容 */
+  /** Content of a think/text row */
   text?: string;
-  /** tool 行：工具名 */
+  /** tool row: tool name */
   name?: string;
-  /** tool 行：参数（展开显示，mono 截断） */
+  /** tool row: arguments (shown when expanded, monospace and truncated) */
   args?: string;
   err?: boolean;
-  /** tool 行耗时 / 自定义右侧信息 */
+  /** tool row duration / custom info on the right */
   ms?: number;
   meta?: string;
-  /** 时间戳（epoch ms，消息交错排序用） */
+  /** Timestamp (epoch ms, used for interleaved message sorting) */
   at?: number;
 }
 
 const VARIANTS: { id: ThinkVariant; label: string }[] = [
-  { id: 'steps', label: '步骤' },
-  { id: 'reasoning', label: '推理' },
-  { id: 'search', label: '检索' },
-  { id: 'coding', label: '编码' },
+  { id: 'steps', label: 'Steps' },
+  { id: 'reasoning', label: 'Reasoning' },
+  { id: 'search', label: 'Search' },
+  { id: 'coding', label: 'Coding' },
 ];
 
 function isSearchTool(name?: string): boolean {
@@ -44,7 +44,7 @@ function queryOf(r: ThinkRow): string {
         const v = o.query ?? o.q ?? o.pattern ?? o.search ?? o.path ?? o.keyword;
         if (typeof v === 'string' && v.trim()) return v;
       }
-    } catch { /* 非 JSON，原样当查询 */ }
+    } catch { /* not JSON, use it as the query as-is */ }
     return raw.length > 96 ? raw.slice(0, 96) + '…' : raw;
   }
   return r.name ?? '';
@@ -72,11 +72,11 @@ function rowsFor(rows: ThinkRow[], variant: ThinkVariant): ThinkRow[] {
 
 interface Props {
   rows: ThinkRow[];
-  /** 运行中：标题走 shimmer + 默认展开 */
+  /** Running: the title shimmers + expanded by default */
   running?: boolean;
   label?: string;
   defaultOpen?: boolean;
-  /** 展开区补充内容（如流式尾巴） */
+  /** Extra content for the expanded area (e.g. the streaming tail) */
   children?: ReactNode;
 }
 
@@ -86,7 +86,7 @@ export function Thinking({ rows, running = false, label, defaultOpen, children }
   const [picked, setPicked] = useState<ThinkVariant | null>(null);
   const variant = picked && available.includes(picked) ? picked : (available[0] ?? 'steps');
   const shown = rowsFor(rows, variant);
-  const text = label ?? (running ? '思考中…' : '思考过程');
+  const text = label ?? (running ? 'Thinking…' : 'Thought process');
 
   return (
     <div className={'think' + (open ? ' open' : '')} data-variant={variant}>
@@ -134,7 +134,7 @@ export function Thinking({ rows, running = false, label, defaultOpen, children }
                 return (
                   <div key={r.id} className={'think-hit' + (live ? ' live' : '')} data-kind="tool">
                     <span className="think-hit-q">{queryOf(r)}</span>
-                    {r.err ? <span className="err">失败</span> : live ? <span className="tmeta">检索中</span> : <span className="ok">命中</span>}
+                    {r.err ? <span className="err">failed</span> : live ? <span className="tmeta">searching</span> : <span className="ok">hit</span>}
                     {r.ms != null ? <span className="tmeta">{r.ms} ms</span> : null}
                   </div>
                 );
@@ -144,7 +144,7 @@ export function Thinking({ rows, running = false, label, defaultOpen, children }
                   <div key={r.id} className={'think-code' + (live ? ' live' : '')} data-kind="tool">
                     <div className="think-code-bar">
                       <span className="tname">{r.name}</span>
-                      <span className={r.err ? 'err' : live ? 'tmeta' : 'ok'}>{r.err ? '失败' : live ? '执行中' : '成功'}</span>
+                      <span className={r.err ? 'err' : live ? 'tmeta' : 'ok'}>{r.err ? 'failed' : live ? 'running' : 'ok'}</span>
                       {r.ms != null ? <span className="tmeta">{r.ms} ms</span> : null}
                     </div>
                     {r.args ? <div className="targs">{r.args}</div> : null}
@@ -170,7 +170,7 @@ export function Thinking({ rows, running = false, label, defaultOpen, children }
               );
             })}
             {children}
-            {shown.length === 0 && !children ? <div className="think-empty">（空）</div> : null}
+            {shown.length === 0 && !children ? <div className="think-empty">(empty)</div> : null}
           </div>
           {available.length > 1 ? (
             <div className="think-tabs">

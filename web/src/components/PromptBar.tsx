@@ -1,6 +1,6 @@
-// 职责：命令条（Beautiful UI「Prompt Bar」移植，MIT © Shane Levine）——
-//   自适应输入 + @ 源提及 + / 斜杠命令 + 模型芯片 + 语音输入 + 发送。
-//   纯展示/输入组件：检索、命令、发送全部经回调上抛；模型芯片只展示当前模型（无切换 API 就不做假下拉）。
+// Responsibility: prompt bar (port of Beautiful UI's "Prompt Bar", MIT © Shane Levine) ——
+//   auto-growing input + @ source mentions + / slash commands + model chip + voice input + send.
+//   A pure display/input component: search, commands and sending are all passed up via callbacks; the model chip only shows the current model (no fake dropdown without a switching API).
 import {
   forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type ReactNode,
@@ -16,9 +16,9 @@ export interface SlashCommand {
   id: string;
   label: string;
   hint?: string;
-  /** 替换 /cmd 为这段文字 */
+  /** Replace /cmd with this text */
   insert?: string;
-  /** 立刻执行（组件会清掉 /cmd） */
+  /** Run immediately (the component clears /cmd) */
   run?: () => void;
 }
 
@@ -43,7 +43,7 @@ function speechCtor(): (new () => SpeechRec) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-/** 模式 chip 光标图标（InputBar 形态） */
+/** Mode chip cursor icon (InputBar style) */
 function CursorIcon() {
   return (
     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -52,7 +52,7 @@ function CursorIcon() {
   );
 }
 
-/** 下拉 chevron 图标 */
+/** Dropdown chevron icon */
 function ChevronIcon() {
   return (
     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="pbar-chip-chev" aria-hidden="true">
@@ -61,7 +61,7 @@ function ChevronIcon() {
   );
 }
 
-/** 光标前尚未闭合的 @query（忽略已完成的 @[title]） */
+/** The unclosed @query before the cursor (ignores completed @[title]) */
 export function mentionAt(text: string, caret: number): { start: number; q: string } | null {
   const before = text.slice(0, caret);
   const m = /(?:^|[\s])@([^\s[\]]*)$/.exec(before);
@@ -69,7 +69,7 @@ export function mentionAt(text: string, caret: number): { start: number; q: stri
   return { start: caret - m[1].length - 1, q: m[1] };
 }
 
-/** 行首 /cmd */
+/** Leading /cmd */
 export function slashAt(text: string, caret: number): { start: number; q: string } | null {
   const before = text.slice(0, caret);
   const m = /(?:^|\n)\/([^\s]*)$/.exec(before);
@@ -85,21 +85,21 @@ interface Props {
   disabled?: boolean;
   busy?: boolean;
   mentions?: MentionItem[];
-  /** @query 变化时上抛，调用方负责检索 */
+  /** Passed up when the @query changes; the caller is responsible for searching */
   onMentionQuery?: (q: string) => void;
   mentionEmpty?: string;
   commands?: SlashCommand[];
-  /** 当前模型名（只展示；没有切换 API 就不做假 picker） */
+  /** Current model name (display only; no fake picker without a switching API) */
   model?: string;
-  /** 可用模型列表（模型菜单展示） */
+  /** Available models (shown in the model menu) */
   models?: string[];
-  /** 选择模型回调（调用方持久化 + 下一轮生效） */
+  /** Model selection callback (the caller persists it + it takes effect next turn) */
   onModelChange?: (model: string) => void;
-  /** 协作模式名（Agent / Auto 等，只展示） */
+  /** Collaboration mode name (Agent / Auto etc., display only) */
   mode?: string;
-  /** 工具栏左侧附加动作（提升为任务等） */
+  /** Extra actions on the left of the toolbar (promote to task etc.) */
   actions?: ReactNode;
-  /** 条下方附加（提升表单等） */
+  /** Extra content below the bar (promotion form etc.) */
   extra?: ReactNode;
   variant?: 'rounded' | 'pill';
 }
@@ -108,12 +108,12 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
   value,
   onChange,
   onSend,
-  placeholder = '问点什么…',
+  placeholder = 'Ask something…',
   disabled = false,
   busy = false,
   mentions = [],
   onMentionQuery,
-  mentionEmpty = '无命中',
+  mentionEmpty = 'No matches',
   commands = [],
   model,
   models = ['deepseek-v4-flash', 'deepseek-v4-pro'],
@@ -132,8 +132,8 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
   const [hl, setHl] = useState<{ top: number; height: number } | null>(null);
   const [listening, setListening] = useState(false);
   const canSpeak = useMemo(() => speechCtor() != null, []);
-  // 模式/模型下拉菜单（当前打开哪个；null = 全关）。引擎不支持会话级切换，
-  // 选项点击只提示"不可切"（防假功能），高亮当前值。
+  // Mode/model dropdown menu (which one is open; null = all closed). The engine does not support per-session switching,
+  // so clicking an option only hints "cannot switch" (no fake features) and highlights the current value.
   const [openMenu, setOpenMenu] = useState<'mode' | 'model' | null>(null);
   const chipWrapRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -202,7 +202,7 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
   useLayoutEffect(() => {
     if (!menuOpen) { setHl(null); setActive(0); return; }
     glide(Math.min(active, Math.max(0, shown.length - 1)));
-    // 仅在菜单内容变化时重定位
+    // Only reposition when the menu content changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuOpen, shown.length, mention?.q, slash?.q]);
 
@@ -251,7 +251,7 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
       return;
     }
     const rec = new Ctor();
-    rec.lang = 'zh-CN';
+    rec.lang = 'en-US';
     rec.continuous = true;
     rec.interimResults = true;
     dictBase.current = value;
@@ -325,9 +325,9 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
             </button>
           ))}
           {mention && shown.length === 0 ? (
-            <div className="pbar-empty">{mention.q ? mentionEmpty : '输入关键词检索知识库'}</div>
+            <div className="pbar-empty">{mention.q ? mentionEmpty : 'Type keywords to search the knowledge base'}</div>
           ) : null}
-          {slash && shown.length === 0 ? <div className="pbar-empty">无匹配命令</div> : null}
+          {slash && shown.length === 0 ? <div className="pbar-empty">No matching commands</div> : null}
         </div>
       ) : null}
 
@@ -349,7 +349,7 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
         <button
           type="button"
           className="pbar-tool"
-          title="@ 引用源"
+          title="@ cite a source"
           disabled={disabled}
           onClick={() => { insertToken('@'); }}
         >
@@ -359,7 +359,7 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
           <button
             type="button"
             className="pbar-tool"
-            title="/ 命令"
+            title="/ commands"
             disabled={disabled}
             onClick={() => {
               const el = taRef.current;
@@ -373,12 +373,12 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
         ) : null}
         {actions}
         <span className="pbar-spacer" />
-        {/* 模式 + 模型下拉 chip（InputBar 形态：点击展开菜单） */}
+        {/* Mode + model dropdown chips (InputBar style: click to open the menu) */}
         <div className="pbar-chips" ref={chipWrapRef}>
           <button
             type="button"
             className={'pbar-chip' + (openMenu === 'mode' ? ' open' : '')}
-            title="协作模式"
+            title="Collaboration mode"
             onClick={() => setOpenMenu(openMenu === 'mode' ? null : 'mode')}
           >
             <CursorIcon />
@@ -399,13 +399,13 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
                   {m === mode ? <span className="pbar-dd-check">✓</span> : null}
                 </button>
               ))}
-              <div className="pbar-dd-note">模式是建卡时的 Profile 设置（协作方式），会话内不可切换</div>
+              <div className="pbar-dd-note">The mode is the card's profile setting chosen at creation (collaboration mode) and cannot be switched within a session</div>
             </div>
           ) : null}
           <button
             type="button"
             className={'pbar-chip' + (openMenu === 'model' ? ' open' : '')}
-            title="当前模型"
+            title="Current model"
             onClick={() => setOpenMenu(openMenu === 'model' ? null : 'model')}
           >
             <span className="pbar-chip-model">{model || 'deepseek-v4-flash'}</span>
@@ -428,17 +428,17 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
                   {(m === (model || 'deepseek-v4-flash')) ? <span className="pbar-dd-check">✓</span> : null}
                 </button>
               ))}
-              <div className="pbar-dd-note">切换后下一轮对话生效（无需新建会话）</div>
+              <div className="pbar-dd-note">Takes effect from the next turn after switching (no new session needed)</div>
             </div>
           ) : null}
         </div>
-        {/* 语音按钮暂隐藏：浏览器原生语音识别对中文/术语准确率不稳，功能不完善不暴露入口
-            （保留代码，未来接入可靠识别后置 true 恢复） */}
+        {/* Voice button hidden for now: the browser's native speech recognition is unreliable for Chinese/technical terms, so an unfinished feature gets no entry point
+            (the code is kept; set it back to true once reliable recognition is wired in) */}
         {false && canSpeak ? (
           <button
             type="button"
             className={'pbar-tool' + (listening ? ' on' : '')}
-            title={listening ? '停止语音' : '语音输入'}
+            title={listening ? 'Stop voice input' : 'Voice input'}
             disabled={disabled}
             aria-pressed={listening}
             onClick={startDict}
@@ -453,8 +453,8 @@ export const PromptBar = forwardRef<PromptBarHandle, Props>(function PromptBar({
           type="button"
           className={'pbar-send' + (sendOk ? ' on' : '')}
           disabled={!sendOk}
-          title="发送"
-          aria-label="发送"
+          title="Send"
+          aria-label="Send"
           onClick={() => { recRef.current?.stop(); onSend(); }}
         >
           {busy ? (

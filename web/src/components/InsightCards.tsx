@@ -1,11 +1,11 @@
-// 职责：洞察卡（Beautiful UI「Insight Cards」移植，MIT © Shane Levine）——
-//   分页洞察 + 可 scrub 的折线（指针滑动读点）+ 对比行。纯展示，CTA 经回调上抛。
+// Responsibility: insight cards (port of Beautiful UI's "Insight Cards", MIT © Shane Levine) ——
+//   paged insights + a scrubbable line chart (read points by sliding the pointer) + comparison rows. Display only; the CTA is passed up via callback.
 import { useMemo, useState, type ReactNode } from 'react';
 
 export interface InsightSpark {
   label: string;
   value: string;
-  /** 正 = 绿升，负 = 红降 */
+  /** Positive = green up, negative = red down */
   delta?: number;
 }
 
@@ -13,7 +13,7 @@ export interface InsightPage {
   id: string;
   body: ReactNode;
   sparks?: InsightSpark[];
-  /** 可 scrub 的序列（空则不画图） */
+  /** Scrubbable series (no chart if empty) */
   series?: number[];
   seriesLabel?: string;
   fmt?: (v: number) => string;
@@ -70,10 +70,10 @@ export function InsightCards({ pages }: Props) {
   return (
     <div className="insight">
       <div className="insight-head">
-        <span className="insight-kicker">洞察 {i + 1}<em>/{n}</em></span>
+        <span className="insight-kicker">Insight {i + 1}<em>/{n}</em></span>
         <span className="insight-nav">
-          <button type="button" className="insight-arrow" disabled={i <= 0} onClick={() => setI((v) => v - 1)} aria-label="上一条">‹</button>
-          <button type="button" className="insight-arrow" disabled={i >= n - 1} onClick={() => setI((v) => v + 1)} aria-label="下一条">›</button>
+          <button type="button" className="insight-arrow" disabled={i <= 0} onClick={() => setI((v) => v - 1)} aria-label="Previous">‹</button>
+          <button type="button" className="insight-arrow" disabled={i >= n - 1} onClick={() => setI((v) => v + 1)} aria-label="Next">›</button>
         </span>
       </div>
       <div className="insight-body">{page.body}</div>
@@ -94,7 +94,7 @@ export function InsightCards({ pages }: Props) {
       ) : null}
       {series.length > 1 ? (
         <div className="insight-chart">
-          <div className="insight-chart-lab">{page.seriesLabel ?? '趋势'}</div>
+          <div className="insight-chart-lab">{page.seriesLabel ?? 'Trend'}</div>
           <Scrub key={page.id} pts={series} fmt={fmt} />
         </div>
       ) : null}

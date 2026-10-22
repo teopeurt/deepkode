@@ -1,6 +1,6 @@
-// 职责：Sidebar —— 项目列表（两行：名称 + 状态小字统计 / 状态点 / 折叠 / 筛选输入）+ 新建项目 + 设置入口。
-// 状态点：运行蓝 > 待确认黄 > 空闲灰；统计：运行中/失败/完成；busy 计数徽标。侧栏折叠由 App 控制 #approw.side-off。
-// 滑动高亮：Beautiful UI「Sidebar Nav」移植（MIT © Shane Levine）—— hover/当前项 glide 条。
+// Responsibility: Sidebar —— project list (two lines: name + small status stats / status dot / collapse / filter input) + new project + settings entry.
+// Status dot: running blue > awaiting confirmation yellow > idle gray; stats: running/failed/done; busy count badge. Sidebar collapsing is controlled by App via #approw.side-off.
+// Sliding highlight: port of Beautiful UI's "Sidebar Nav" (MIT © Shane Levine) —— glide bar for hover/current item.
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useUi, writeHash } from '../../store/ui';
 import { useProjection, cardStatus, type Project } from '../../store/projection';
@@ -17,7 +17,7 @@ export function Sidebar() {
   const projects = useProjection((s) => s.projects);
   const cards = useProjection((s) => s.cards);
   const pending = useUi((s) => s.pendingProjects);
-  // 待移除项目（侧栏 hover ✕ → 与首页/项目页共用同一确认框）
+  // Project pending removal (sidebar hover ✕ → shares the same confirmation dialog as the home/project pages)
   const [removeTarget, setRemoveTarget] = useState<{ pid: string; name: string } | null>(null);
 
   const list = useMemo(() => {
@@ -51,9 +51,9 @@ export function Sidebar() {
       </div>
       <div className="side-filter">
         <Icon name="search" size="sm" />
-        <input value={sideQ} onChange={(e) => setSideQ(e.target.value)} placeholder="筛选项目" aria-label="筛选项目" />
+        <input value={sideQ} onChange={(e) => setSideQ(e.target.value)} placeholder="Filter projects" aria-label="Filter projects" />
       </div>
-      <div className="side-label">项目</div>
+      <div className="side-label">Projects</div>
       <div
         id="side-projects"
         ref={listRef}
@@ -63,7 +63,7 @@ export function Sidebar() {
         }}
       >
         {hl ? <span className="side-glide" style={{ top: hl.top, height: hl.height, opacity: 1 }} /> : null}
-        {list.length === 0 && <div className="side-empty">无匹配项目</div>}
+        {list.length === 0 && <div className="side-empty">No matching projects</div>}
         {list.map((p, k) => {
           const c = p.counts
             ? { Pending: p.counts[0], Running: p.counts[1], Done: p.counts[2], Failed: p.counts[3], Cancelled: p.counts[4] }
@@ -71,10 +71,10 @@ export function Sidebar() {
           const active = p.id === pid;
           const dotColor = c.Running > 0 ? 'var(--blue)' : '';
           const stats: string[] = [];
-          if (c.Running) stats.push(c.Running + ' 运行中');
-          if (c.Failed) stats.push(c.Failed + ' 失败');
-          if (c.Done) stats.push(c.Done + ' 完成');
-          if (p.pending) stats.push('待注册');
+          if (c.Running) stats.push(c.Running + ' running');
+          if (c.Failed) stats.push(c.Failed + ' failed');
+          if (c.Done) stats.push(c.Done + ' done');
+          if (p.pending) stats.push('pending registration');
           const busy = c.Running;
           return (
             <div
@@ -90,15 +90,15 @@ export function Sidebar() {
             >
               <span className="sdot" style={dotColor ? { background: dotColor } : undefined} />
               <div className="side-main">
-                <div className="sname">{p.name}{p.pending ? <span style={{ fontSize: 10, color: 'var(--blue)', marginLeft: 6 }}>新</span> : null}</div>
-                <div className="sstats">{stats.join(' · ') || '空闲'}</div>
+                <div className="sname">{p.name}{p.pending ? <span style={{ fontSize: 10, color: 'var(--blue)', marginLeft: 6 }}>new</span> : null}</div>
+                <div className="sstats">{stats.join(' · ') || 'Idle'}</div>
               </div>
               {busy ? <span className="scount">{busy}</span> : null}
               {!p.pending && (
                 <button
                   className="side-rm"
-                  title="移除项目"
-                  aria-label={'移除项目 ' + p.name}
+                  title="Remove project"
+                  aria-label={'Remove project ' + p.name}
                   onClick={(e) => { e.stopPropagation(); setRemoveTarget({ pid: p.id, name: p.name }); }}
                 >
                   ✕
@@ -110,10 +110,10 @@ export function Sidebar() {
       </div>
       <div className="side-foot">
         <button className="side-new" onClick={() => setDirOpen(true)}>
-          <Icon name="plus" size="sm" />新建项目
+          <Icon name="plus" size="sm" />New project
         </button>
         <button className="side-set" onClick={() => setSettingsOpen(true)}>
-          <Icon name="gear" size="sm" />设置
+          <Icon name="gear" size="sm" />Settings
         </button>
       </div>
       {removeTarget ? (
@@ -123,7 +123,7 @@ export function Sidebar() {
   );
 }
 
-/** 卡计数（按卡的最新执行状态；无执行 = Pending）—— 服务端 counts 缺失时的本地兜底 */
+/** Card counts (by each card's latest execution status; no execution = Pending) —— local fallback when the server's counts are missing */
 function cardCountsLocal(cards: import('../../store/projection').CardState[]): { Pending: number; Running: number; Done: number; Failed: number; Cancelled: number } {
   const out = { Pending: 0, Running: 0, Done: 0, Failed: 0, Cancelled: 0 };
   cards.forEach((c) => {

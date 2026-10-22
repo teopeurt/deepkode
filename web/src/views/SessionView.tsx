@@ -1,7 +1,7 @@
-// 职责：简单会话（两级制松入口，A 组闭环）—— 零成本问答/探索/调研，不进看板。
-// 真实引擎：创建独立 ACP 会话（不挂卡）→ 发消息 → 消息流 = user 评论 + agent Text 活动。
-// 提升为任务 / 存入知识库 / @知识库检索引用 —— 会话层的三条主路径。
-// 面板：Chat + Prompt Bar + Selection Actions（Beautiful UI 移植）。
+// Responsibility: simple chat (the loose entry point of the two-tier model, group A loop) —— zero-cost Q&A / exploration / research, kept off the board.
+// Real engine: create a standalone ACP session (not attached to a card) → send messages → message stream = user comments + agent Text activities.
+// Promote to task / save to knowledge base / @-cite knowledge-base search results —— the three main paths of the chat layer.
+// Panel: Chat + Prompt Bar + Selection Actions (ported from Beautiful UI).
 import { useEffect, useRef, useState } from 'react';
 import { useUi, writeHash } from '../store/ui';
 import { useProjection, type TaskState } from '../store/projection';
@@ -26,34 +26,34 @@ export function SessionView({ pid }: { pid: string }) {
   const [sid, setSid] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedList, setArchivedList] = useState<api.ChatSummary[]>([]);
-  // 当前激活 tab：会话 sid / '__new__'（新会话）/ '__archived__'（归档）——决定高亮
+  // Currently active tab: chat sid / '__new__' (new chat) / '__archived__' (archived) —— decides the highlight
   const [activeTab, setActiveTab] = useState<string>('__new__');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [kbHits, setKbHits] = useState<KbHit[]>([]);
   const [promoteOpen, setPromoteOpen] = useState(false);
   const [promoteTitle, setPromoteTitle] = useState('');
-  // 会话内切模型（localStorage 持久化；下一轮生效由引擎 model 插件读取）
+  // In-chat model switching (persisted in localStorage; takes effect next turn when the engine model plugin reads it)
   const [selModel, setSelModel] = useState<string | null>(() => {
     try { return localStorage.getItem('helmsman-chat-model'); } catch { return null; }
   });
   const pickModel = (m: string) => {
-    try { localStorage.setItem('helmsman-chat-model', m); } catch { /* 忽略 */ }
+    try { localStorage.setItem('helmsman-chat-model', m); } catch { /* ignore */ }
     setSelModel(m);
-    // 写入共享文件（引擎 model 插件读它，下一轮生效）；需 sid 已创建
+    // Write to the shared file (the engine model plugin reads it, effective next turn); requires the sid to exist
     if (sid) {
       void fetch(`/api/sessions/${encodeURIComponent(sid)}/model`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: m }),
       }).catch(() => {});
     }
-    toast(`已切换模型 ${m}（下一轮生效）`);
+    toast(`Switched model to ${m} (takes effect next turn)`);
   };
   const areaRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<PromptBarHandle>(null);
 
-  // 挂载：复用最新会话（不创建）。无历史 → sid=null 显示空态，发消息时才创建。
-  // 用户切历史会话 / 点新会话 → setSid。
+  // On mount: reuse the latest chat (do not create one). No history → sid=null shows the empty state; a chat is only created when a message is sent.
+  // The user switches to a past chat / clicks new chat → setSid.
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -61,16 +61,16 @@ export function SessionView({ pid }: { pid: string }) {
       if (!alive) return;
       const list = useProjection.getState().chatList[pid] || [];
       if (list.length > 0) {
-        // 复用最新会话（按 started_at 降序取第一个）
+        // Reuse the latest chat (take the first by started_at descending)
         const latest = [...list].sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0))[0];
         setSid(latest.session_id);
         setActiveTab(latest.session_id);
         await useProjection.getState().loadChat(latest.session_id, pid);
       } else {
-        setSid(null); // 空态：不创建，等用户发消息
+        setSid(null); // empty state: don't create, wait for the user to send a message
       }
     })();
-    // 当前会话轮询刷新（sid 变化时重绑）
+    // Poll to refresh the current chat (rebinds when sid changes)
     const timer = setInterval(() => {
       const cur = useProjection.getState();
       if (cur.chatList[pid]?.length && alive) void cur.loadChats(pid);
@@ -81,7 +81,7 @@ export function SessionView({ pid }: { pid: string }) {
   const task: TaskState | undefined = sid ? chats[sid] : undefined;
   const stream = useProjection((s) => (sid ? s.streams[sid] : undefined));
 
-  // 底部锚定
+  // Anchor to the bottom
   useEffect(() => {
     if (areaRef.current) areaRef.current.scrollTop = areaRef.current.scrollHeight;
   }, [task?.activities.length, task?.comments?.length, stream]);
@@ -89,16 +89,16 @@ export function SessionView({ pid }: { pid: string }) {
   const send = async () => {
     const v = input.trim();
     if (!v || busy) return;
-    if (conn !== 'online') { toast('断连期间禁用控制操作'); return; }
+    if (conn !== 'online') { toast('Control actions are disabled while disconnected'); return; }
     setBusy(true);
     setInput('');
-    // 懒创建：无 sid 时（首次发消息）才真正建会话
+    // Lazy creation: only actually create the chat when there is no sid (first message)
     let target = sid;
     if (!target) {
       target = await useProjection.getState().createChat(pid);
       if (!target) {
         setBusy(false);
-        toast('会话创建失败，见错误横幅');
+        toast('Failed to create chat, see the error banner');
         return;
       }
       setSid(target);
@@ -106,7 +106,7 @@ export function SessionView({ pid }: { pid: string }) {
     }
     const ok = await useProjection.getState().sendChat(target, v);
     setBusy(false);
-    if (!ok) toast('发送失败，见错误横幅');
+    if (!ok) toast('Send failed, see the error banner');
   };
 
   const searchKb = async (q: string) => {
@@ -122,31 +122,31 @@ export function SessionView({ pid }: { pid: string }) {
     if (!sid) return;
     const cardId = await useProjection.getState().promoteChat(sid, { title: promoteTitle.trim() || undefined });
     if (cardId) {
-      toast('已提升为任务：上下文进简报，引擎自动执行');
+      toast('Promoted to task: context goes into the brief, the engine runs it automatically');
       setPromoteOpen(false);
       writeHash(pid, 'kanban', cardId, 'comments');
       setSid(null);
       setActiveTab('__new__');
       setInput('');
     } else {
-      toast('提升失败，见错误横幅');
+      toast('Promotion failed, see the error banner');
     }
   };
 
   const saveKb = async () => {
     if (!sid) return;
     const ok = await useProjection.getState().saveChatToKb(sid);
-    toast(ok ? '已存入知识库（human-approved）' : '存入失败，见错误横幅');
+    toast(ok ? 'Saved to knowledge base (human-approved)' : 'Save failed, see the error banner');
   };
 
   const hasThread = !!task?.comments?.length;
   const commands: SlashCommand[] = [
-    { id: 'promote', label: '提升为任务', hint: '进看板', run: () => { if (hasThread) setPromoteOpen(true); else toast('先聊几句再提升'); } },
-    { id: 'save', label: '存入知识库', hint: 'human-approved', run: () => { if (hasThread) void saveKb(); else toast('先聊几句再保存'); } },
+    { id: 'promote', label: 'Promote to task', hint: 'to the board', run: () => { if (hasThread) setPromoteOpen(true); else toast('Chat a bit before promoting'); } },
+    { id: 'save', label: 'Save to knowledge base', hint: 'human-approved', run: () => { if (hasThread) void saveKb(); else toast('Chat a bit before saving'); } },
   ];
 
-  // 消息序列：user 评论 + agent 思考（Reasoning）+ agent 正文（Text），按时间戳交错合并。
-  // 顺序 = 真实对话流：输入 → 思考 → 输出；不能分块堆叠（全部评论/全部思考/全部正文）。
+  // Message sequence: user comments + agent thinking (Reasoning) + agent body (Text), interleaved by timestamp.
+  // Order = the real conversation flow: input → thinking → output; never stack them in blocks (all comments / all thinking / all body).
   type Row = { kind: 'user' | 'think' | 'text'; text: string; at: number };
   const rows: Row[] = [
     ...(task?.comments || []).map((c) => ({ kind: c.who === 'user' ? ('user' as const) : ('text' as const), text: c.text, at: c.at ?? 0 })),
@@ -161,7 +161,7 @@ export function SessionView({ pid }: { pid: string }) {
     }),
   ].sort((a, b) => a.at - b.at);
 
-  /** 渲染块：连续的 think 合并成一个折叠块（思考过程一条条显示很碎） */
+  /** Render blocks: consecutive think rows are merged into one collapsible block (showing the thinking one row at a time is too fragmented) */
   const blocks: Array<
     | { kind: 'user'; text: string }
     | { kind: 'think'; texts: string[] }
@@ -181,7 +181,7 @@ export function SessionView({ pid }: { pid: string }) {
     return out;
   })();
 
-  // 工具调用汇总（ToolStart 与紧随的 ToolResult 配对 → 折叠 chips）
+  // Tool-call summary (pair ToolStart with the immediately following ToolResult → collapsible chips)
   const toolCalls: ToolChip[] = (() => {
     const out: ToolChip[] = [];
     const acts = task?.activities ?? [];
@@ -211,30 +211,30 @@ export function SessionView({ pid }: { pid: string }) {
 
   const offline = conn !== 'online';
   const copyOut = (t: string) => {
-    void navigator.clipboard.writeText(t).then(() => toast('已复制')).catch(() => toast('复制失败'));
+    void navigator.clipboard.writeText(t).then(() => toast('Copied')).catch(() => toast('Copy failed'));
   };
   const sources = toolCalls.map((c) => ({ id: c.id, label: c.name }));
   const followups = hasThread ? [
-    { id: 'promote', label: '提升为任务', onClick: () => setPromoteOpen(true) },
-    { id: 'save', label: '存入知识库', onClick: () => void saveKb() },
+    { id: 'promote', label: 'Promote to task', onClick: () => setPromoteOpen(true) },
+    { id: 'save', label: 'Save to knowledge base', onClick: () => void saveKb() },
   ] : undefined;
-  // 流式显示：stream 存在且与 blocks 最后一条 Text 不同才显示流式区。
-  // 生命周期：流式期间 stream 累积（滚动显示）；turn/end 后 REST 回填 blocks，
-  // 当 stream 内容 == blocks 最后一条 Text 时自然让位（无消失再显示的真空间隙）。
+  // Streaming display: only show the streaming area when stream exists and differs from the last Text in blocks.
+  // Lifecycle: while streaming, stream accumulates (scrolling display); after turn/end REST backfills blocks,
+  // and when the stream content == the last Text in blocks it yields naturally (no gap where content disappears and reappears).
   const lastText = blocks.length ? (() => {
     for (let i = blocks.length - 1; i >= 0; i--) {
       if (blocks[i].kind === 'text') return blocks[i].text;
     }
     return '';
   })() : '';
-  // 流式让位判断：stream 是 lastText 的进行中版本——当 blocks 已回填完整文本
-  // （stream 与 lastText 内容一致，忽略末尾未拼完的差异）时流式区让位。
-  // 判断规则：lastText 以 stream 开头（stream 是完整文本的前缀）且
-  // stream 已覆盖 lastText 的大部分（≥60%）→ 视为已回填，流式让位。
+  // Stream-yield check: stream is the in-progress version of lastText —— once blocks have been backfilled with the full text
+  // (stream and lastText agree, ignoring an unfinished tail) the streaming area yields.
+  // Rule: lastText starts with stream (stream is a prefix of the full text) and
+  // stream already covers most of lastText (≥60%) → treat as backfilled, the stream yields.
   const lastLen = lastText.length;
   const streamLen = stream?.length ?? 0;
   const showStream = !!stream && !(lastLen > 0 && lastText.startsWith(stream) && streamLen >= lastLen * 0.6);
-  // 流式期间：blocks 里"正在流式的那条 text"由流式区显示，这里截断避免重复
+  // While streaming: the "text currently streaming" in blocks is shown by the streaming area, so drop it here to avoid duplication
   const visibleBlocks = showStream
     ? (() => {
         const out = [...blocks];
@@ -245,12 +245,12 @@ export function SessionView({ pid }: { pid: string }) {
       })()
     : blocks;
 
-  // 会话切换器：历史会话 tabs（最新在前）+ 新会话（label 优先标题，无标题取最后消息）
+  // Chat switcher: past-chat tabs (newest first) + new chat (label prefers the title, otherwise the last message)
   const sortedChats = [...chatList].sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0));
   const chatTabs: ChatTab[] = [
     ...sortedChats.slice(0, 8).map((c) => ({
       id: c.session_id,
-      label: (c.title || c.last_text || '空会话').slice(0, 14) + ((c.title || c.last_text || '').length > 14 ? '…' : ''),
+      label: (c.title || c.last_text || 'Empty chat').slice(0, 14) + ((c.title || c.last_text || '').length > 14 ? '…' : ''),
       onRename: async (id, title) => {
         const ok = await useProjection.getState().renameChat(id, title);
         if (ok) await useProjection.getState().loadChats(pid);
@@ -258,7 +258,7 @@ export function SessionView({ pid }: { pid: string }) {
       onFork: async (id) => {
         const newSid = await useProjection.getState().forkChat(id, pid);
         if (newSid) {
-          toast('已分叉为新会话');
+          toast('Forked into a new chat');
           setSid(newSid);
           setActiveTab(newSid);
           await useProjection.getState().loadChats(pid);
@@ -267,15 +267,15 @@ export function SessionView({ pid }: { pid: string }) {
       onArchive: async (id) => {
         const ok = await useProjection.getState().archiveChat(id, pid);
         if (ok) {
-          toast('会话已归档');
+          toast('Chat archived');
           setSid(null);
           setActiveTab('__new__');
           await useProjection.getState().loadChats(pid);
         }
       },
     })),
-    { id: '__new__', label: '＋ 新会话' },
-    { id: '__archived__', label: '🗄 归档' },
+    { id: '__new__', label: '+ New chat' },
+    { id: '__archived__', label: '🗄 Archived' },
   ];
 
   const switchChat = async (id: string) => {
@@ -312,7 +312,7 @@ export function SessionView({ pid }: { pid: string }) {
               value={input}
               onChange={setInput}
               onSend={() => void send()}
-              placeholder={sid ? "继续这个会话…  @ 引用知识库  / 命令" : "开始新会话：问点什么…  @ 引用知识库  / 命令"}
+              placeholder={sid ? "Continue this chat…  @ cite knowledge  / commands" : "Start a new chat: ask something…  @ cite knowledge  / commands"}
               disabled={offline}
               busy={busy}
               mentions={kbHits.map((h) => ({ id: h.id, title: h.title, sub: h.summary?.slice(0, 60) }))}
@@ -322,16 +322,16 @@ export function SessionView({ pid }: { pid: string }) {
               onModelChange={pickModel}
               actions={(
                 <>
-                  <button type="button" className="pbar-tool" disabled={!hasThread} onClick={() => setPromoteOpen(true)} title="提升为任务">提升</button>
-                  <button type="button" className="pbar-tool" disabled={!hasThread} onClick={() => void saveKb()} title="存入知识库">存库</button>
+                  <button type="button" className="pbar-tool" disabled={!hasThread} onClick={() => setPromoteOpen(true)} title="Promote to task">Promote</button>
+                  <button type="button" className="pbar-tool" disabled={!hasThread} onClick={() => void saveKb()} title="Save to knowledge base">Save</button>
                 </>
               )}
               extra={promoteOpen ? (
                 <div className="kb-picker">
                   <div className="kb-picker-row">
-                    <input value={promoteTitle} onChange={(e) => setPromoteTitle(e.target.value)} placeholder="任务标题（默认取会话首条）" />
-                    <Button variant="primary" mini onClick={() => void promote()}>确认提升</Button>
-                    <Button variant="quiet" mini onClick={() => setPromoteOpen(false)}>取消</Button>
+                    <input value={promoteTitle} onChange={(e) => setPromoteTitle(e.target.value)} placeholder="Task title (defaults to the chat's first message)" />
+                    <Button variant="primary" mini onClick={() => void promote()}>Confirm promotion</Button>
+                    <Button variant="quiet" mini onClick={() => setPromoteOpen(false)}>Cancel</Button>
                   </div>
                 </div>
               ) : null}
@@ -347,10 +347,10 @@ export function SessionView({ pid }: { pid: string }) {
         >
           {archivedOpen ? (
             <div className="chat-archived">
-              <div className="chat-archived-title">🗄 归档会话</div>
+              <div className="chat-archived-title">🗄 Archived chats</div>
               {archivedList.length === 0 ? (
                 <div className="chat-empty">
-                  <div className="d">没有归档会话。归档的会话会出现在这里，可恢复。</div>
+                  <div className="d">No archived chats. Archived chats show up here and can be restored.</div>
                 </div>
               ) : (
                 <div className="chat-archived-list">
@@ -364,13 +364,13 @@ export function SessionView({ pid }: { pid: string }) {
                         onClick={async () => {
                           const ok = await api.restoreChat(c.session_id);
                           if (ok) {
-                            toast('会话已恢复');
+                            toast('Chat restored');
                             setArchivedList((prev) => prev.filter((x) => x.session_id !== c.session_id));
                             await useProjection.getState().loadChats(pid);
-                          } else toast('恢复失败，见错误横幅');
+                          } else toast('Restore failed, see the error banner');
                         }}
                       >
-                        恢复
+                        Restore
                       </button>
                     </div>
                   ))}
@@ -380,13 +380,13 @@ export function SessionView({ pid }: { pid: string }) {
           ) : !sid ? (
             <div className="chat-empty">
               <Icon name="chat" className="ic" style={{ width: 26, height: 26, color: 'var(--text3)' }} />
-              <div className="t">新会话</div>
-              <div className="d">在下方输入第一条消息即开始（不发消息不会创建会话）。问答与探索不进入看板；聊出眉目可提升为任务，值得记住的存入知识库。</div>
+              <div className="t">New chat</div>
+              <div className="d">Type your first message below to start (no chat is created until you send one). Q&amp;A and exploration stay off the board; once something takes shape you can promote it to a task, and anything worth remembering can be saved to the knowledge base.</div>
             </div>
           ) : blocks.length === 0 ? (
             <div className="chat-empty">
               <Icon name="chat" className="ic" style={{ width: 26, height: 26, color: 'var(--text3)' }} />
-              <div className="d">问答与探索，不进入看板。聊出眉目，可以提升为任务；值得记住的，存入知识库。</div>
+              <div className="d">Q&amp;A and exploration, kept off the board. Once something takes shape, promote it to a task; anything worth remembering, save it to the knowledge base.</div>
             </div>
           ) : (
             visibleBlocks.map((b, i) => (

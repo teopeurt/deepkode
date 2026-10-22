@@ -1,6 +1,6 @@
-// 轻量语法高亮（零依赖）：注释 / 字符串 / 关键字 / 数字。
-// 正则 tokenize 逐行处理；字符串/注释优先匹配，其内部不误染关键字。
-// 覆盖 ts/js/jsx/tsx/css/json/html/py/md/bash 常见语法；未知语言降级为纯文本（不崩）。
+// Lightweight syntax highlighting (zero dependencies): comments / strings / keywords / numbers.
+// Regex tokenization line by line; strings/comments are matched first so keywords inside them are not colored.
+// Covers common syntax for ts/js/jsx/tsx/css/json/html/py/md/bash; unknown languages degrade to plain text (no crash).
 import type { ReactNode } from 'react'
 
 const KW = [
@@ -16,7 +16,7 @@ const KW = [
 
 const KW_RE = new RegExp(`\\b(?:${KW.join('|')})\\b`, 'g')
 
-/** 注释起始符（按语言；bash/md 的 # 与 py 的 # 冲突不大，通用处理） */
+/** Comment start markers (per language; the # of bash/md and py rarely conflicts, handled generically) */
 const COM_STARTS = ['//', '/*', '*/', '#', '<!--', '-->', '--']
 
 interface Token { kind: 'str' | 'com' | 'kw' | 'num' | 'plain'; text: string }
@@ -24,28 +24,28 @@ interface Token { kind: 'str' | 'com' | 'kw' | 'num' | 'plain'; text: string }
 const STR_RE = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g
 
 /**
- * 单行 tokenize：先标记字符串与注释区间（不重叠），再在剩余区间匹配关键字/数字。
- * 返回 { tokens, comToEnd } —— comToEnd 表示该行在行内注释后结束（剩余全为注释）。
+ * Single-line tokenize: first mark string and comment ranges (non-overlapping), then match keywords/numbers in the remaining ranges.
+ * Returns { tokens, comToEnd } —— comToEnd means the line ends in an inline comment (everything after it is comment).
  */
 function tokenizeLine(line: string): { tokens: Token[]; comToEnd: boolean } {
   const tokens: Token[] = []
   const zones: Array<{ start: number; end: number; kind: 'str' | 'com' }> = []
   let comToEnd = false
 
-  // ① 字符串（含行内模板）
+  // ① Strings (including inline templates)
   STR_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = STR_RE.exec(line))) {
     zones.push({ start: m.index, end: m.index + m[0].length, kind: 'str' })
   }
-  // ② 行内注释（找最早出现的注释起始符）
+  // ② Inline comments (find the earliest comment start marker)
   let comStart = -1
   for (const c of COM_STARTS) {
     const i = line.indexOf(c)
     if (i >= 0 && (comStart === -1 || i < comStart)) comStart = i
   }
   if (comStart >= 0) {
-    // 注释起始若在字符串内则忽略（如 "//" 出现在字符串里）
+    // Ignore a comment start that falls inside a string (e.g. "//" appearing in a string)
     const inStr = zones.some((z) => z.kind === 'str' && comStart >= z.start && comStart < z.end)
     if (!inStr) {
       zones.push({ start: comStart, end: line.length, kind: 'com' })
@@ -54,7 +54,7 @@ function tokenizeLine(line: string): { tokens: Token[]; comToEnd: boolean } {
   }
   zones.sort((a, b) => a.start - b.start)
 
-  // ③ 在非 zone 区间匹配关键字/数字
+  // ③ Match keywords/numbers outside the zones
   let pos = 0
   const push = (s: string, kind: Token['kind']) => { if (s) tokens.push({ text: s, kind }) }
   for (const z of zones) {
@@ -64,13 +64,13 @@ function tokenizeLine(line: string): { tokens: Token[]; comToEnd: boolean } {
   }
   push(line.slice(pos), 'plain')
 
-  // ④ 关键字/数字只在 plain 段内匹配
+  // ④ Keywords/numbers only match within plain segments
   const out: Token[] = []
   for (const t of tokens) {
     if (t.kind !== 'plain') { out.push(t); continue }
     KW_RE.lastIndex = 0
     const NUM_RE = /\b\d+(?:\.\d+)?\b/g
-    // 合并匹配：关键字或数字，按位置先后
+    // Merge matches: keyword or number, in positional order
     let k: RegExpExecArray | null
     let n: RegExpExecArray | null
     let cursor = 0
@@ -80,17 +80,17 @@ function tokenizeLine(line: string): { tokens: Token[]; comToEnd: boolean } {
       n = NUM_RE.exec(t.text)
       const nextK = k ? { start: k.index, end: k.index + k[0].length, kind: 'kw' as const } : null
       const nextN = n ? { start: n.index, end: n.index + n[0].length, kind: 'num' as const } : null
-      // 找最近的下一个
+      // Find the nearest next one
       const cands: Array<{ start: number; end: number; kind: 'kw' | 'num' }> = []
       if (nextK) cands.push(nextK)
       if (nextN) cands.push(nextN)
       if (cands.length === 0) break
       cands.sort((a, b) => a.start - b.start)
       const c = cands[0]
-      // 重置另一个正则到本次位置之后，避免漏匹配
+      // Reset the other regex to just after this position, to avoid missing matches
       if (c === nextK && n) NUM_RE.lastIndex = c.end
       if (c === nextN && k) KW_RE.lastIndex = c.end
-      if (c.start < cursor) { // 已消费区域，跳到更远
+      if (c.start < cursor) { // already consumed region, skip further ahead
         if (c === nextK) KW_RE.lastIndex = Math.max(KW_RE.lastIndex, c.end)
         else NUM_RE.lastIndex = Math.max(NUM_RE.lastIndex, c.end)
         continue
@@ -115,7 +115,7 @@ const KIND_CLS: Record<Token['kind'], string> = {
   str: 'hl-str', com: 'hl-com', kw: 'hl-kw', num: 'hl-num', plain: '',
 }
 
-/** 代码 → 高亮片段（按行；行尾注释整行染灰） */
+/** Code → highlighted fragments (per line; a trailing comment grays out the rest of the line) */
 export function highlightLine(line: string): ReactNode {
   const { tokens, comToEnd } = tokenizeLine(line)
   const nodes: ReactNode[] = []
