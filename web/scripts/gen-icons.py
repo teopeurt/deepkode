@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Helmsman 图标 PNG 生成器。
+"""Helmsman icon PNG generator.
 
-几何与 web/public/favicon.svg 完全一致（向量 master 是 SVG，本脚本只负责栅格化）。
-从 512px 超采样母版 LANCZOS 降采样到各目标尺寸，保证小尺寸清晰。
+The geometry matches web/public/favicon.svg exactly (the vector master is the SVG; this script only rasterizes it).
+Downsamples a 512px supersampled master with LANCZOS to each target size, keeping small sizes crisp.
 
-用法: python3 web/scripts/gen-icons.py
-输出: web/public/favicon-16x16.png / favicon-32x32.png / apple-touch-icon.png /
+Usage: python3 web/scripts/gen-icons.py
+Output: web/public/favicon-16x16.png / favicon-32x32.png / apple-touch-icon.png /
       android-chrome-192x192.png / android-chrome-512x512.png
 """
 import math
 import os
 from PIL import Image, ImageDraw
 
-BASE = 512      # 超采样母版边长
-S = 8.0         # 64 单位设计稿 -> 母版像素的缩放
+BASE = 512      # side length of the supersampled master
+S = 8.0         # scale from the 64-unit design grid -> master pixels
 OUT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "public"))
 
-BG_TOP = (0x18, 0x26, 0x42)   # 渐变上（深海）
-BG_BOT = (0x0B, 0x12, 0x20)   # 渐变下（深渊）
-LIGHT = (0xDC, 0xE6, 0xF5)    # 轮体（夜航文字色）
-BLUE = (0x6C, 0xB0, 0xF5)     # 轴心（深渊蓝）
+BG_TOP = (0x18, 0x26, 0x42)   # gradient top (deep sea)
+BG_BOT = (0x0B, 0x12, 0x20)   # gradient bottom (abyss)
+LIGHT = (0xDC, 0xE6, 0xF5)    # wheel body (Night Voyage text color)
+BLUE = (0x6C, 0xB0, 0xF5)     # hub (abyss blue)
 LIGHT_A = LIGHT + (235,)      # stroke-opacity 0.92
 
 SIZES = {
@@ -44,7 +44,7 @@ def r(v):
 
 
 def render_master():
-    # 1) 垂直渐变圆角方块
+    # 1) Vertical-gradient rounded square
     grad = Image.new("RGB", (BASE, BASE))
     gd = ImageDraw.Draw(grad)
     for y in range(BASE):
@@ -56,11 +56,11 @@ def render_master():
 
     d = ImageDraw.Draw(img)
 
-    # 2) 轮缘（SVG stroke 居中于 r=18.5，线宽 3 -> 17..20；
-    #    PIL ellipse outline 由 bbox 半径向内描边，故 bbox 半径取 18.5+1.5=20）
+    # 2) Wheel rim (the SVG stroke is centered on r=18.5, width 3 -> 17..20;
+    #    PIL's ellipse outline strokes inward from the bbox radius, so the bbox radius is 18.5+1.5=20)
     d.ellipse([c(32 - 20, 32 - 20), c(32 + 20, 32 + 20)], outline=LIGHT_A, width=r(3))
 
-    # 3) 8 根辐条（r=6 -> r=17，线宽 3 圆头 = 端点补 1.5 半径圆）
+    # 3) 8 spokes (r=6 -> r=17, width 3 with round caps = a radius-1.5 circle added at each end)
     for deg in range(0, 360, 45):
         rad = math.radians(deg)
         p1 = (32 + 6.0 * math.cos(rad), 32 + 6.0 * math.sin(rad))
@@ -69,13 +69,13 @@ def render_master():
         for (x, y) in (p1, p2):
             d.ellipse([c(x - 1.5, y - 1.5), c(x + 1.5, y + 1.5)], fill=LIGHT_A)
 
-    # 4) 8 个手柄圆钮（r=21.5，r=2.4）
+    # 4) 8 handle knobs (r=21.5, radius 2.4)
     for deg in range(0, 360, 45):
         rad = math.radians(deg)
         x, y = 32 + 21.5 * math.cos(rad), 32 + 21.5 * math.sin(rad)
         d.ellipse([c(x - 2.4, y - 2.4), c(x + 2.4, y + 2.4)], fill=LIGHT_A)
 
-    # 5) 轮毂 + 蓝色轴心
+    # 5) Hub + blue axle
     d.ellipse([c(32 - 5.5, 32 - 5.5), c(32 + 5.5, 32 + 5.5)], fill=LIGHT)
     d.ellipse([c(32 - 2.2, 32 - 2.2), c(32 + 2.2, 32 + 2.2)], fill=BLUE)
 

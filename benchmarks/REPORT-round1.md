@@ -1,93 +1,93 @@
-# CWL 结构化驱逐 — 实验报告（第 1 轮）
+# CWL Structured Eviction — Experiment Report (Round 1)
 
-> 日期：2026-09 | 范式：arXiv:2606.11213（Context Window Lifecycle）
-> 自研实现：独立插件 `dsh-cwl`（Helmsman 以依赖消费） | 实验脚本：`run-cwl-experiment.mjs`
+> Date: 2026-09 | Paradigm: arXiv:2606.11213 (Context Window Lifecycle)
+> In-house implementation: standalone plugin `dsh-cwl` (consumed by Helmsman as a dependency) | Experiment script: `run-cwl-experiment.mjs`
 
-## 结论先行（诚实版）
+## Conclusion first (the honest version)
 
-**在当前实验规模（6 长任务 × 5 步、单任务 ~8-15K tokens）下，CWL 驱逐是负担而非资产。**
-这**不是实现失败**，而是**规模错配的实证**——CWL 论文的适用场景是超长会话
-（89 个连续任务、80M tokens），驱逐"已持久化且不再需要"的动作段才有效；
-短任务上下文太小，驱逐制造了"上下文丢失 → 重做"的负循环。
+**At the current experiment scale (6 long tasks × 5 steps, ~8-15K tokens per task), CWL eviction is a burden, not an asset.**
+This is **not an implementation failure** but **empirical evidence of a scale mismatch** —— the CWL paper targets ultra-long sessions
+(89 consecutive tasks, 80M tokens), where evicting action segments that are "already persisted and no longer needed" pays off;
+short-task contexts are too small, and eviction creates a negative loop of "context lost → redo".
 
-## 实验设置
+## Setup
 
-- **三组对照**（目标）：无管理基线 / 摘要压缩（ACP 路线）/ CWL 驱逐
-- **任务集**：`data/long-tasks.json`（6 任务 × 5 步，验收可判定：产物文件检查）
-- **CWL 预算**：经 `DSH_CWL_BUDGET` 注入低阈值（6000/8000/10000/12000）模拟长任务压力
-- **指标**：完成率 / 验收通过率 / 步骤数 / 成本 / 驱逐次数
+- **Three control groups** (target): unmanaged baseline / summary compression (the ACP route) / CWL eviction
+- **Task set**: `data/long-tasks.json` (6 tasks × 5 steps, decidable acceptance: artifact file checks)
+- **CWL budget**: low thresholds injected via `DSH_CWL_BUDGET` (6000/8000/10000/12000) to simulate long-task pressure
+- **Metrics**: completion rate / acceptance pass rate / step count / cost / eviction count
 
-## 结果
+## Results
 
-### 预算 8000（驱逐激进触发，103 次）
+### Budget 8000 (eviction fires aggressively, 103 times)
 
-| 任务 | 状态 | 步骤 | 成本 | 驱逐 |
+| Task | Status | Steps | Cost | Evictions |
 |---|---|---|---|---|
-| lt-1 配置审计 | Done | 18 | ¥0.088 | 14 |
-| lt-2 多模块文档 | Done | 8 | ¥0.035 | 5 |
-| **lt-3 重构脚本** | Done | **74** | **¥0.657** | **50** |
-| lt-4 数据处理 | Done | 10 | ¥0.066 | 6 |
-| lt-5 环境配置 | Done | 12 | ¥0.042 | 5 |
-| lt-6 测试补齐 | Done | 28 | ¥0.118 | 23 |
-| **合计** | 6/6 | 150 | **¥1.006** | 103 |
+| lt-1 config audit | Done | 18 | ¥0.088 | 14 |
+| lt-2 multi-module docs | Done | 8 | ¥0.035 | 5 |
+| **lt-3 refactor scripts** | Done | **74** | **¥0.657** | **50** |
+| lt-4 data processing | Done | 10 | ¥0.066 | 6 |
+| lt-5 environment config | Done | 12 | ¥0.042 | 5 |
+| lt-6 fill in tests | Done | 28 | ¥0.118 | 23 |
+| **Total** | 6/6 | 150 | **¥1.006** | 103 |
 
-对比：无驱逐基线（预算 20000 未触发）6/6 done、75 步、¥0.399。
+For comparison: the no-eviction baseline (budget 20000, never triggered) was 6/6 done, 75 steps, ¥0.399.
 
-### 预算 12000（优先驱逐 expl，仍过频）
+### Budget 12000 (evict expl first, still too frequent)
 
-| 任务 | 状态 | 步骤 | 成本 |
+| Task | Status | Steps | Cost |
 |---|---|---|---|
-| 5 个正常任务 | Done | 8-15 | ¥0.03-0.09 |
-| 1 个被拖垮任务 | Failed | 47 | ¥0.632（~50 次驱逐）|
+| 5 normal tasks | Done | 8-15 | ¥0.03-0.09 |
+| 1 task dragged down | Failed | 47 | ¥0.632 (~50 evictions) |
 
-## 分析
+## Analysis
 
-1. **驱逐过频破坏工作连续性**：lt-3 被驱逐 50 次 → agent 每步丢失前置上下文 → 反复重新探索/重做（74 步、¥0.66，是正常 5-10 倍）
-2. **优先 expl 仍不够**：expl 驱逐保留摘要（`已探索：read, grep（path）`），但 agent 对**摘要的推理依赖**（"读了什么 → 据此决定"）无法用一句话替代
-3. **预算甜点不存在**：6000 破坏任务；8000/10000/12000 都过频；正常 128K 窗口又根本不触发——短任务没有合适的驱逐预算
+1. **Over-frequent eviction breaks work continuity**: lt-3 was evicted 50 times → the agent lost its prior context at every step → repeatedly re-explored/redid work (74 steps, ¥0.66, 5-10× normal)
+2. **Evicting expl first is still not enough**: expl eviction keeps a summary (`explored: read, grep (path)`), but the agent's **reasoning dependency on the summary** ("what was read → decide based on it") can't be replaced by one line
+3. **There is no budget sweet spot**: 6000 breaks tasks; 8000/10000/12000 are all too frequent; and the normal 128K window never triggers at all —— there is no suitable eviction budget for short tasks
 
-## 教训与下一步
+## Lessons and next steps
 
-1. **CWL 价值在超长任务**：需构造 20+ 步、累积 >50K tokens 的真长任务（或跨任务会话）才能测出驱逐优势
-2. **驱逐选择需更智能**：当前"最老优先"太机械；应参考论文的**依赖图**——只驱逐"后续动作不再引用"的探索段（需要 agent 主动标注 deps，即 cwl_mark 的完整版）
-3. **可选路线**：
-   - A. 构造真长任务（单会话 20-30 步连续工作）重测
-   - B. 接受"短任务驱逐无益"结论，把 CWL 定位为**超长会话专用**（默认关闭，超阈值才启用）
-   - C. 改进驱逐策略（依赖图 + 摘要增强）后再测
+1. **CWL's value is in ultra-long tasks**: we need truly long tasks with 20+ steps accumulating >50K tokens (or cross-task sessions) to measure an eviction advantage
+2. **Eviction selection needs to be smarter**: the current "oldest first" is too mechanical; follow the paper's **dependency graph** —— only evict exploration segments that "later actions no longer reference" (requires the agent to annotate deps actively, i.e. the full version of cwl_mark)
+3. **Options**:
+   - A. Build truly long tasks (20-30 steps of continuous work in one session) and retest
+   - B. Accept the conclusion "eviction doesn't help short tasks" and position CWL as **for ultra-long sessions only** (off by default, enabled only above a threshold)
+   - C. Improve the eviction strategy (dependency graph + better summaries) and then retest
 
-## 复现
+## Reproduce
 
 ```bash
-# 启动引擎（注入预算）
+# Start the engine (inject the budget)
 DSH_CWL_BUDGET=8000 node dsh/launcher.mjs dsh/cordis.yml
-# 跑 CWL 组
+# Run the CWL group
 node benchmarks/run-cwl-experiment.mjs cwl
 ```
 
 ---
 
-## 第 2 轮：episode 推断 v2（阶段合并 + 依赖图）
+## Round 2: episode inference v2 (phase merging + dependency graph)
 
-### 改进
-- **阶段合并**：连续同类型工具调用合并为语义 episode（平均每 episode 7.7 工具调用，
-  而非 v1 的每个 assistant/message 一段）
-- **依赖图**：act 触碰（读写）的文件若之前 expl 读过 → deps 边；被依赖的 expl 不驱逐
-- **expl 驱逐保留摘要**（`已探索：read, grep（path）`），工作记忆不丢
+### Improvements
+- **Phase merging**: consecutive tool calls of the same type are merged into a semantic episode (7.7 tool calls per episode on average,
+  instead of v1's one segment per assistant/message)
+- **Dependency graph**: if a file touched (read/written) by an act was read earlier by an expl → a deps edge; expl segments that are depended on are not evicted
+- **expl eviction keeps a summary** (`explored: read, grep (path)`), so working memory isn't lost
 
-### 结果（预算 12000）
+### Results (budget 12000)
 
-| 指标 | v1（碎片）| v2（合并+依赖）| 基线（无驱逐）|
+| Metric | v1 (fragmented) | v2 (merged + deps) | Baseline (no eviction) |
 |---|---|---|---|
-| 驱逐次数 | 103 | **10** | 0 |
-| 总步骤 | 150 | 95 | 75 |
-| 总成本 | ¥1.01 | ¥0.67 | ¥0.40 |
-| 完成率 | 6/6 | 6/6 | 6/6 |
-| 验收 | 5/6 | 5/6 | 5/6 |
+| Evictions | 103 | **10** | 0 |
+| Total steps | 150 | 95 | 75 |
+| Total cost | ¥1.01 | ¥0.67 | ¥0.40 |
+| Completion rate | 6/6 | 6/6 | 6/6 |
+| Acceptance | 5/6 | 5/6 | 5/6 |
 
-### 分析
-- 驱逐次数降 90%（103→10），正常任务（lt-1/4/5）v2 下驱逐 0 次、成本与基线持平
-  → **v2 解决了"驱逐碎片化破坏任务"**
-- 但 lt-3（重构脚本，任务难度 outlier）仍被 4 次驱逐放大（37 步 ¥0.42 vs 基线 19 步）
-- **诚实结论**：v2 修复了正确性，但短任务下驱逐仍无净收益——省下的 token
-  抵不过驱逐带来的上下文损失 + 重做风险。CWL 价值在超长会话（论文场景），
-  短任务（5 步）规模下"无驱逐"仍是最优
+### Analysis
+- Evictions dropped 90% (103→10); normal tasks (lt-1/4/5) had 0 evictions under v2 and cost on par with the baseline
+  → **v2 fixes "fragmented eviction breaking tasks"**
+- But lt-3 (refactor scripts, a difficulty outlier) was still amplified by 4 evictions (37 steps, ¥0.42 vs 19 steps for the baseline)
+- **Honest conclusion**: v2 fixes correctness, but eviction still has no net benefit on short tasks —— the tokens saved
+  don't outweigh the context loss + redo risk that eviction brings. CWL's value is in ultra-long sessions (the paper's scenario);
+  at short-task (5-step) scale, "no eviction" is still optimal

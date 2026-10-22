@@ -1,68 +1,68 @@
 [
   {
     "id": "lt-1",
-    "title": "审计并修复项目配置",
+    "title": "Audit and fix the project configuration",
     "steps": [
-      "列出项目所有文件",
-      "读取 package.json 和配置文件",
-      "创建 CONFIG-REVIEW.md 记录发现的问题",
-      "修复配置中的明显错误",
-      "验证修复结果"
+      "List all files in the project",
+      "Read package.json and the config files",
+      "Create CONFIG-REVIEW.md recording the problems found",
+      "Fix the obvious errors in the configuration",
+      "Verify the fixes"
     ],
     "acceptance": "test -f CONFIG-REVIEW.md && grep -q 'package.json' CONFIG-REVIEW.md"
   },
   {
     "id": "lt-2",
-    "title": "编写多模块文档",
+    "title": "Write multi-module documentation",
     "steps": [
-      "读取所有源码文件了解结构",
-      "为每个模块编写文档到 docs/",
-      "创建总览 README-OVERVIEW.md",
-      "在总览中链接各模块文档"
+      "Read all source files to understand the structure",
+      "Write documentation for each module into docs/",
+      "Create an overview README-OVERVIEW.md",
+      "Link each module's documentation from the overview"
     ],
     "acceptance": "test -f README-OVERVIEW.md && grep -q 'docs' README-OVERVIEW.md"
   },
   {
     "id": "lt-3",
-    "title": "重构脚本并验证",
+    "title": "Refactor the scripts and verify",
     "steps": [
-      "读取现有脚本",
-      "识别重复代码",
-      "重构为函数并拆分",
-      "运行验证脚本确认无回归"
+      "Read the existing scripts",
+      "Identify duplicated code",
+      "Refactor into functions and split them up",
+      "Run the verification script to confirm there are no regressions"
     ],
     "acceptance": "test -f refactored.sh && grep -q 'function' refactored.sh"
   },
   {
     "id": "lt-4",
-    "title": "数据文件批量处理",
+    "title": "Batch-process the data files",
     "steps": [
-      "列出 data 目录所有文件",
-      "读取每个文件内容",
-      "汇总统计到 summary.txt",
-      "生成处理报告"
+      "List all files in the data directory",
+      "Read each file's content",
+      "Aggregate the statistics into summary.txt",
+      "Generate a processing report"
     ],
     "acceptance": "test -f summary.txt && test -f report.md"
   },
   {
     "id": "lt-5",
-    "title": "环境检查与配置生成",
+    "title": "Check the environment and generate configuration",
     "steps": [
-      "检查环境（node/git/pnpm 版本）",
-      "读取现有配置",
-      "生成 .env.example",
-      "编写配置说明 README-CONFIG.md"
+      "Check the environment (node/git/pnpm versions)",
+      "Read the existing configuration",
+      "Generate .env.example",
+      "Write the configuration guide README-CONFIG.md"
     ],
     "acceptance": "test -f .env.example && grep -q 'PORT' .env.example"
   },
   {
     "id": "lt-6",
-    "title": "测试用例补齐",
+    "title": "Fill in missing test cases",
     "steps": [
-      "读取被测源码",
-      "分析测试缺口",
-      "编写测试用例文件",
-      "运行测试确认通过"
+      "Read the source under test",
+      "Analyze the test gaps",
+      "Write a test case file",
+      "Run the tests to confirm they pass"
     ],
     "acceptance": "test -f tests/extra.test.js && grep -q 'test(' tests/extra.test.js"
   }

@@ -1,48 +1,48 @@
-# Helmsman 给 Agent 的环境约定
+# Helmsman environment conventions for agents
 
-本仓库的工具链由 **Nix flake + direnv（nix-direnv）** 管理，不是 nvm / Homebrew / 全局 Node。
+This repository's toolchain is managed by **Nix flake + direnv (nix-direnv)**, not nvm / Homebrew / a global Node.
 
-## 先加载环境，再判断缺不缺
+## Load the environment first, then decide whether something is missing
 
-Agent 的非交互 shell **不会**跑 zsh 的 `direnv hook`，所以裸跑 `which node` / `which pnpm` 经常是空的。这不代表本机没装，更不要去：
+An agent's non-interactive shell does **not** run zsh's `direnv hook`, so a bare `which node` / `which pnpm` is often empty. That does not mean the tools aren't installed on this machine, and you should never:
 
-- 用 nvm / fnm / volta 装 Node
-- 用 Homebrew / apt 装 Node
-- 拿 Cursor / Zed 自带的 Node 或 `corepack` 顶替
-- 改用户的 `~/.zshrc` / nix config
+- install Node with nvm / fnm / volta
+- install Node with Homebrew / apt
+- substitute the Node bundled with Cursor / Zed, or `corepack`
+- edit the user's `~/.zshrc` / nix config
 
-正确做法是先加载本仓库的 direnv，再执行命令：
+The right way is to load this repository's direnv first, then run the command:
 
 ```bash
-# 单次命令（推荐）
+# Single command (recommended)
 direnv exec . <command>
 
-# 当前 shell 注入 PATH（后续命令都走 Nix 环境）
+# Inject PATH into the current shell (later commands all use the Nix environment)
 eval "$(direnv export bash)"
 ```
 
-加载成功后应能看到类似：
+Once loaded you should see something like:
 
-- `node` → Nix 的 Node.js 22（当前 22.23.2）
-- `pnpm` → Nix 的 pnpm（当前 11.20.0）
+- `node` → Nix's Node.js 22 (currently 22.23.2)
+- `pnpm` → Nix's pnpm (currently 11.20.0)
 
-若 `direnv exec .` 失败：先在仓库根执行 `direnv allow`，不要自行安装工具链。
+If `direnv exec .` fails: run `direnv allow` at the repository root first; do not install a toolchain yourself.
 
-## 本机文件（不要提交、不要删除）
+## Machine-local files (do not commit, do not delete)
 
-这些是开发者本机环境，已在 `.gitignore`：
+These are the developer's local environment and are already in `.gitignore`:
 
-| 路径 | 作用 |
+| Path | Purpose |
 |---|---|
-| `.envrc` | `use flake .`（direnv 入口） |
-| `.direnv/` | nix-direnv 缓存的 devShell |
-| `flake.nix` / `flake.lock` | 本机 flake（若在） |
+| `.envrc` | `use flake .` (the direnv entry point) |
+| `.direnv/` | the devShell cached by nix-direnv |
+| `flake.nix` / `flake.lock` | the local flake (if present) |
 
-仓库里看不到 `flake.nix` 也正常：环境在本机，不进 git。
+It's normal not to see `flake.nix` in the repository: the environment lives on the local machine and is not checked into git.
 
-## 日常命令
+## Everyday commands
 
-都从仓库根、经 direnv 跑：
+Run them all from the repository root, through direnv:
 
 ```bash
 direnv exec . bash -lc 'cd dsh && pnpm install'

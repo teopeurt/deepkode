@@ -4,29 +4,29 @@ dist/
 *.tsbuildinfo
 .pnpm-store/
 
-# dsh 运行时
+# dsh runtime
 dsh/.sessions/
 dsh/.sessions-archive/
 dsh/.sessions*/
 
-# 任务级 worktree（执行隔离区）
+# task-level worktrees (execution isolation areas)
 .helmsman/
 
-# 产品数据
+# product data
 helmsman.db
 helmsman.db-shm
 helmsman.db-wal
 dsh/.helmsman.db*
 
-# 工具
+# tools
 .direnv/
 
-# 本机环境（dsh 工具安装的 skills / direnv）
+# local environment (skills installed by dsh tooling / direnv)
 .agents/
 .envrc
 skills-lock.json
 
-# 研究/设计过程产物（本地保留，不上传）
+# research/design process artifacts (kept locally, not uploaded)
 research/
 research-ide-agents.md
 design-mockups/
