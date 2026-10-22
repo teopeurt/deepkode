@@ -1,8 +1,8 @@
-// [helmsman] 事件流 → 看板状态投影（从 server-ts/src/projection.ts 原样搬迁，TS→JS）。
-// fold 是纯函数增量：board 插件每收到一个 session/event 调一次，状态就地更新。
-// 可回放：同一日志重放两次结果一致（确定性、崩溃恢复、测试）。
-// M2.3（O1=B）：卡/executions 两层 —— 卡 = 资产（需求/缺陷/任务 + 里程碑），
-// 挂 0..n 次执行；执行 = 会话（1:1）。看板状态 = 最新一次执行的状态。
+// [helmsman] Event stream → board-state projection (ported as-is from server-ts/src/projection.ts, TS→JS).
+// fold is a pure incremental function: the board plugin calls it once per session/event, updating state in place.
+// Replayable: replaying the same log twice yields the same result (determinism, crash recovery, tests).
+// M2.3 (O1=B): two layers, card/executions —— card = asset (requirement/defect/task + milestone),
+// with 0..n executions attached; execution = session (1:1). Board status = status of the latest execution.
 
 export const MAX_ACTIVITIES = 200
 export const MAX_COMMENTS = 200
@@ -25,8 +25,8 @@ export function newTaskState(sid) {
   }
 }
 
-/** 依赖契约校验（目标契约 taskgraph）：数组 + 同项目存在 + 无自依赖 + 无循环；返回去重后的规范 id 列表。
- *  非法输入抛错（调用方转 HTTP 400）；undefined → 空数组（无依赖）。 */
+/** Dependency contract validation (target contract: taskgraph): array + exists in the same project + no self-dependency + no cycles; returns the deduplicated canonical id list.
+ *  Invalid input throws (caller turns it into HTTP 400); undefined → empty array (no dependencies). */
 export function validateDeps(deps, knownIds, selfId, getDeps) {
   if (deps === undefined) return []
   if (!Array.isArray(deps) || !deps.every((d) => typeof d === 'string' && d.length > 0)) {
@@ -37,13 +37,13 @@ export function validateDeps(deps, knownIds, selfId, getDeps) {
   for (const d of new Set(deps)) {
     if (d === selfId) throw new Error('card cannot depend on itself')
     if (!known.has(d)) throw new Error(`dep '${d}' not in project`)
-    if (getDeps && leadsToSelf(d, selfId, getDeps)) throw new Error(`依赖成环：'${d}' 的依赖链回到本卡`)
+    if (getDeps && leadsToSelf(d, selfId, getDeps)) throw new Error(`dependency cycle: the dependency chain of '${d}' leads back to this card`)
     out.push(d)
   }
   return out
 }
 
-/** DFS：从 start 沿依赖链能否到达 selfId（新增边 → 循环）。 */
+/** DFS: can selfId be reached from start along the dependency chain (new edge → cycle). */
 function leadsToSelf(start, selfId, getDeps) {
   const seen = new Set()
   const stack = [start]
@@ -57,14 +57,14 @@ function leadsToSelf(start, selfId, getDeps) {
   return false
 }
 
-/** 卡的最新一次执行（exec_order 优先，回退字典序兜底） */
+/** The card's latest execution (exec_order first, falling back to key order) */
 export function latestExecutionState(card) {
   const order = card.exec_order.length ? card.exec_order : Object.keys(card.executions)
   const sid = order[order.length - 1]
   return (sid && card.executions[sid]) || null
 }
 
-/** 依赖门判定（§2.1 调度门）：卡的所有依赖卡最新执行均 Done → true（可启动）。 */
+/** Dependency gate (§2.1 scheduling gate): true (can start) when the latest execution of every dependency card is Done. */
 export function depsMet(card, cardsById) {
   return (card.deps ?? []).every((d) => {
     const dc = cardsById[d]
@@ -73,7 +73,7 @@ export function depsMet(card, cardsById) {
   })
 }
 
-/** 未完成的依赖卡 id 列表（顺序保持 deps 声明序） */
+/** Ids of unfinished dependency cards (preserves the declaration order of deps) */
 export function unmetDeps(card, cardsById) {
   return (card.deps ?? []).filter((d) => {
     const dc = cardsById[d]
@@ -82,7 +82,7 @@ export function unmetDeps(card, cardsById) {
   })
 }
 
-/** 是否存在正常执行代次（非校准会话；D1.7 校准不算"真正执行过"） */
+/** Whether a normal execution generation exists (not a calibration session; per D1.7, calibration does not count as "really executed") */
 export function hasRealExecution(card) {
   return card.exec_order.some((sid) => !card.executions[sid]?.calib)
 }
@@ -103,7 +103,7 @@ export function newCardState(meta) {
   }
 }
 
-/** 从 content blocks 数组提取全部文本（[{type:'text',text},...]）。 */
+/** Extract all text from a content-block array ([{type:'text',text},...]). */
 function extractText(v) {
   if (!Array.isArray(v)) return undefined
   let out = ''
@@ -126,7 +126,7 @@ function pushComment(t, who, text, at) {
   t.comments.push({ who, text, at })
 }
 
-/** 折叠一个日志事件（纯增量；忽略未知事件类型）。 */
+/** Fold one log event (purely incremental; unknown event types are ignored). */
 export function foldTask(t, ev) {
   const ty = typeof ev.type === 'string' ? ev.type : ''
   const seq = (typeof ev.seq === 'number' ? ev.seq : typeof ev.seq0 === 'number' ? ev.seq0 : 0)
@@ -147,7 +147,7 @@ export function foldTask(t, ev) {
       t.steps += 1
       break
     case 'turn/end': {
-      // waiting 非空 = 任务停在等待批复（plan/acceptance）：本轮虽结束但任务未完结，保留等待态
+      // waiting non-null = task is paused awaiting a reply (plan/acceptance): this turn ended but the task is not finished, keep the waiting state
       if (t.waiting !== null) break
       if (t.status === 'Running' || t.status === 'Pending') {
         const reason = data?.reason
@@ -176,7 +176,7 @@ export function foldTask(t, ev) {
       break
     }
     case 'assistant/message': {
-      // token 用量累积（§6 执行经济学：usage 分桶）
+      // Accumulate token usage (§6 execution economics: usage buckets)
       const u = data?.usage
       if (u) {
         t.usage.inputTokens += typeof u.inputTokens === 'number' ? u.inputTokens : 0
@@ -184,9 +184,9 @@ export function foldTask(t, ev) {
         t.usage.cacheReadTokens += typeof u.cacheReadTokens === 'number' ? u.cacheReadTokens : 0
         t.usage.reasoningTokens += typeof u.reasoningTokens === 'number' ? u.reasoningTokens : 0
       }
-      // 完整文本唯一来源（对齐官方 deriveEventMessage：assistant/message.content 是
-      // 权威文本；chunk/text-chunks 都是它的流式/存储中间态，不重复累积）。
-      // content 里 text → Text 活动，reasoning → Reasoning 活动（同 turn 合并追加）。
+      // Single source of the full text (matches the official deriveEventMessage: assistant/message.content is
+      // the authoritative text; chunk/text-chunks are its streaming/storage intermediate forms and are not accumulated again).
+      // text in content → Text activity, reasoning → Reasoning activity (appended/merged within the same turn).
       const msg = data?.message
       const content = Array.isArray(msg?.content) ? msg.content : []
       let textSeen = false
@@ -213,14 +213,14 @@ export function foldTask(t, ev) {
       break
     }
     case 'assistant/chunk': {
-      // 流式中间态：前端用 streams 实时显示，不进投影 activities（文本权威来源是
-      // assistant/message，避免与 message 双通道重复——v1 projection 同款注释）。
+      // Streaming intermediate state: the frontend shows it live via streams; it does not go into projection activities (the authoritative text source is
+      // assistant/message, avoiding duplication with the message channel —— same note as in the v1 projection).
       break
     }
     case 'text-chunks':
     case 'reasoning-chunks': {
-      // JSONL 存储编码（assistant/chunk delta 的无损打包）：同样不进投影。
-      // 文本以 assistant/message.content 为准（实时与重放同一路径）。
+      // JSONL storage encoding (lossless packing of assistant/chunk deltas): also kept out of the projection.
+      // Text comes from assistant/message.content (live and replay take the same path).
       break
     }
     case 'tool/call': {
@@ -250,15 +250,15 @@ export function foldTask(t, ev) {
   }
 }
 
-/** 控制通道终态（stop_reason）：end_turn → Done；cancelled → Cancelled；其余 → Failed。 */
+/** Control-channel terminal state (stop_reason): end_turn → Done; cancelled → Cancelled; anything else → Failed. */
 export function finishTask(t, stopReason, at) {
-  // Waiting 非空 = 任务停在等待批复：保留等待态，不被终态覆盖
+  // Waiting non-null = task is paused awaiting a reply: keep the waiting state, do not overwrite with a terminal state
   if (t.waiting) return
   t.status = stopReason === 'end_turn' ? 'Done' : stopReason === 'cancelled' ? 'Cancelled' : 'Failed'
   t.finished_at = at
 }
 
-// ---------- 投影存储（内存态） ----------
+// ---------- Projection store (in-memory) ----------
 
 export function newProjection() {
   return { projects: {}, sessionProject: {}, sessionCard: {} }
@@ -274,7 +274,7 @@ export function ensureCard(p, projectId, meta) {
   if (!proj.cards[meta.id]) proj.cards[meta.id] = newCardState(meta)
 }
 
-/** 注册会话。cardId 为空 = 简单会话（独立，挂项目 chats 下，不进看板）。 */
+/** Register a session. Empty cardId = simple chat (standalone, lives under the project's chats, not on the board). */
 export function registerSession(p, sessionId, projectId, cardId) {
   p.sessionProject[sessionId] = projectId
   p.sessionCard[sessionId] = cardId
@@ -290,7 +290,7 @@ export function registerSession(p, sessionId, projectId, cardId) {
   }
 }
 
-/** 会话归属解析（简单会话 → chats；执行 → 卡 executions） */
+/** Resolve which container a session belongs to (simple chat → chats; execution → card executions) */
 function resolveSession(p, sessionId) {
   const pid = p.sessionProject[sessionId]
   const cardId = p.sessionCard[sessionId]
@@ -332,13 +332,13 @@ export function removeProject(p, projectId) {
   }
 }
 
-// ---------- 标记检测（plan / calibrate / checkpoint） ----------
+// ---------- Marker detection (plan / calibrate / checkpoint) ----------
 
-export const PLAN_DONE_MARKER = '【计划完毕】'
-export const CALIBRATE_DONE_MARKER = '【验收标准完毕】'
-export const CHECKPOINT_DONE_MARKER = '【阶段完毕】'
+export const PLAN_DONE_MARKER = '[PLAN DONE]'
+export const CALIBRATE_DONE_MARKER = '[ACCEPTANCE CRITERIA DONE]'
+export const CHECKPOINT_DONE_MARKER = '[CHECKPOINT DONE]'
 
-/** 最后一段连续 Text 产出（探索/工具调用等非 Text 活动中断；标记检测与提取共用的文本源） */
+/** The last contiguous run of Text output (broken by non-Text activities such as exploration/tool calls; shared text source for marker detection and extraction) */
 function lastTextSegment(t) {
   const texts = []
   for (let i = t.activities.length - 1; i >= 0; i--) {
@@ -352,9 +352,9 @@ function lastTextSegment(t) {
 }
 
 /**
- * 检测 agent 是否已在产出段输出标记（最后连续 Text 活动含 marker）。
- * G5 修复：只认 Text 输出，不计 Reasoning——agent 思考中讨论标记字符串是常见行为，
- * 计入会导致"没产出却挂 Waiting"的假阳性。
+ * Detect whether the agent has emitted the marker in its output (the last contiguous Text activities contain the marker).
+ * G5 fix: only Text output counts, not Reasoning —— agents commonly discuss the marker string while thinking,
+ * and counting it causes false positives of "no output yet but parked in Waiting".
  */
 export function detectMarker(t, marker) {
   return lastTextSegment(t).includes(marker)
@@ -365,8 +365,8 @@ export function detectPlanCompletion(t) {
 }
 
 /**
- * 提取 agent 产出的标记前文本（【marker】之前最近的连续 Text 产出段）。
- * G4 修复：只取"最后一段连续 Text 产出"，避免中间文本污染提案。
+ * Extract the text the agent produced before the marker (the nearest contiguous Text output before [marker]).
+ * G4 fix: only take "the last contiguous Text output", so intermediate text does not pollute the proposal.
  */
 export function extractMarkerText(t, marker) {
   const joined = lastTextSegment(t)

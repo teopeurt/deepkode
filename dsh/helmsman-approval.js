@@ -1,15 +1,15 @@
-// [helmsman] D3-4 审批通道引擎内化：引擎插件 answerer 替代 patch 1（ACP requestPermission 桥接）。
-// 原理：ctx.approval.request → 'approval/request' waterfall（scope=agent）。
-// 本插件作为 answerer：把请求入队 → 返回挂起 promise（等 HTTP 批复）→ 兑现 outcome。
-// B1 扩展：兼容前端契约（/api/approvals?project=、decideApproval(id, outcome, comment, remember)）。
-// 接口：
-//   GET  /api/approvals/pending            → [{id, sid, tool_name, reason, at}]（内部探活）
-//   GET  /api/approvals?project=           → [{id, sid, kind, reason, status, ...}]（前端契约）
-//   GET  /api/approvals/suspended?project= → 挂起列表
+// [helmsman] D3-4 approval channel internalized into the engine: an engine-plugin answerer replaces patch 1 (the ACP requestPermission bridge).
+// How it works: ctx.approval.request → 'approval/request' waterfall (scope=agent).
+// This plugin acts as the answerer: enqueue the request → return a pending promise (waiting for the HTTP decision) → fulfil it with the outcome.
+// B1 extension: compatible with the frontend contract (/api/approvals?project=, decideApproval(id, outcome, comment, remember)).
+// Interface:
+//   GET  /api/approvals/pending            → [{id, sid, tool_name, reason, at}] (internal liveness probe)
+//   GET  /api/approvals?project=           → [{id, sid, kind, reason, status, ...}] (frontend contract)
+//   GET  /api/approvals/suspended?project= → suspended list
 //   POST /api/approvals/:id                {outcome:'approved'|'rejected', comment, remember} → {ok:true}
 //   POST /api/approvals/:id/resume         → {ok:true}
 //   POST /api/projects/:pid/approvals/resume-all → {ok:true}
-// 超时/进程退出 → fail-closed（返回 'unavailable'，与引擎缺 answerer 语义一致）。
+// Timeout / process exit → fail-closed (returns 'unavailable', same semantics as the engine having no answerer).
 export const name = 'helmsman-approval'
 export const inject = ['webServer', 'approval', 'helmsmanStorage', 'helmsmanAcceptance']
 
@@ -17,7 +17,7 @@ export function apply(ctx) {
   const { webServer } = ctx
   const storage = ctx.get('helmsmanStorage')?.storage
   const acceptance = ctx.get('helmsmanAcceptance')
-  // 验收门挂起的任务 → 卡/标题查找（投影）
+  // Tasks suspended at the acceptance gate → card/title lookup (projection)
   const acceptanceLookup = (sid) => {
     const board = ctx.get('helmsmanBoard')
     const pid = board?.projection?.sessionProject?.[sid]
@@ -29,29 +29,29 @@ export function apply(ctx) {
     return { pid, cardId, t, card: cardId ? proj.cards?.[cardId] : undefined }
   }
   const pending = new Map() // id → { req, resolve, timer, at, project_id }
-  const resolved = [] // 已决策记录（最近 50 条，供列表回显）
+  const resolved = [] // decided records (latest 50, echoed back in lists)
   let seq = 0
 
-  // 唯一 answerer：入队并挂起，等 HTTP 批复
+  // The only answerer: enqueue and suspend, waiting for the HTTP decision
   ctx.on('approval/request', (req, next) => {
     seq += 1
     const id = seq
     return new Promise((resolve) => {
       const at = Date.now()
-      // 从 agent 的 cwd 推断项目归属（sessionProject 映射由 board 维护，这里简化：用 agent.id 前缀）
+      // Infer project ownership from the agent's cwd (the sessionProject mapping is maintained by the board; simplified here: use an agent.id prefix)
       const project_id = req.agent?.session?.header?.cwd ? 'p-' + at.toString(36) : undefined
       const timer = setTimeout(() => {
         pending.delete(id)
         resolved.unshift({ id, project_id, sid: req.agent?.id, tool_name: req.toolName, reason: req.reason, status: 'unavailable', at })
         if (resolved.length > 50) resolved.pop()
         resolve('unavailable')
-      }, 300_000) // 5 分钟超时（比 v1 宽松）
+      }, 300_000) // 5-minute timeout (more lenient than v1)
       pending.set(id, { req, resolve, timer, at, project_id })
       console.log(`[helmsman-approval] pending ${id} tool=${req.toolName} reason=${req.reason ?? '-'}`)
     })
   })
 
-  // GET /api/approvals —— 前端契约列表（?project= 过滤）
+  // GET /api/approvals —— frontend-contract list (filtered by ?project=)
   webServer.register({
     kind: 'exact',
     path: '/api/approvals',
@@ -69,7 +69,7 @@ export function apply(ctx) {
         project_id: p.project_id,
         created_at: p.at,
       })).filter((a) => !pid || a.project_id === pid)
-      // 合并 storage 里的 acceptance 待批项（验收门挂起；前端契约字段补齐）
+      // Merge in pending acceptance items from storage (suspended at the acceptance gate; fill in frontend-contract fields)
       if (storage) {
         const pendingKinds = new Set(list.map((a) => a.sid))
         for (const a of storage.listPendingApprovals(pid ?? '')) {
@@ -96,7 +96,7 @@ export function apply(ctx) {
     },
   })
 
-  // GET /api/approvals/suspended —— 挂起列表（B1：已决策的 rejected 记录简化呈现）
+  // GET /api/approvals/suspended —— suspended list (B1: decided/rejected records shown in simplified form)
   webServer.register({
     kind: 'exact',
     path: '/api/approvals/suspended',
@@ -111,7 +111,7 @@ export function apply(ctx) {
     },
   })
 
-  // GET /api/approvals/pending —— 内部探活（保留）
+  // GET /api/approvals/pending —— internal liveness probe (kept)
   webServer.register({
     kind: 'exact',
     path: '/api/approvals/pending',
@@ -129,7 +129,7 @@ export function apply(ctx) {
     },
   })
 
-  // POST /api/approvals/:id 与 /api/approvals/:id/resume —— 批复/恢复（prefix 统一分发）
+  // POST /api/approvals/:id and /api/approvals/:id/resume —— decide/resume (dispatched through a single prefix route)
   webServer.register({
     kind: 'prefix',
     path: '/api/approvals',
@@ -139,7 +139,7 @@ export function apply(ctx) {
       if (req.method !== 'POST') return json(405, { error: 'method not allowed' })
       const resume = pathname.match(/^\/api\/approvals\/([^/]+)\/resume$/)
       if (resume) {
-        // B1 简化：resume 无挂起语义（v1 是 Waiting 超时挂起恢复）；返回 ok
+        // B1 simplification: resume has no suspension semantics (in v1 it resumed a Waiting that had timed out and been suspended); returns ok
         return json(200, { ok: true })
       }
       const m = pathname.match(/^\/api\/approvals\/([^/]+)$/)
@@ -151,7 +151,7 @@ export function apply(ctx) {
           const body = JSON.parse(buf || '{}')
           const id = Number(m[1])
           const outcome = body.outcome === 'rejected' ? 'rejected' : 'approved'
-          // acceptance 审批（验收门挂起，storage 持久化）：批准 → merge worktree；拒绝 → 清等待
+          // acceptance approval (suspended at the acceptance gate, persisted in storage): approve → merge the worktree; reject → clear the waiting state
           const appr = storage?.getApproval(id)
           if (appr && appr.kind === 'acceptance') {
             if (!storage.decideApproval(id, outcome, typeof body.comment === 'string' ? body.comment : null)) {
@@ -160,15 +160,15 @@ export function apply(ctx) {
             if (outcome === 'approved') {
               const mr = acceptance?.approveMerge(appr.execution_id)
               if (mr && !mr.ok) {
-                // merge 失败：不吞掉 —— 回滚批复状态？v1 语义：409 且保持待批复。
-                // 简化：批复已落库，但明确报错提示人工处理 worktree。
-                console.warn(`[helmsman-approval] acceptance ${id} 批准但 merge 失败: ${mr.message}`)
+                // merge failed: don't swallow it —— roll back the decision? v1 semantics: 409 and keep it pending.
+                // Simplified: the decision is already persisted, but report the error explicitly so a human can deal with the worktree.
+                console.warn(`[helmsman-approval] acceptance ${id} approved but merge failed: ${mr.message}`)
                 return json(200, { ok: true, decision: outcome, merge_error: mr.message })
               }
-              console.log(`[helmsman-approval] acceptance ${id} 批准 → merge`)
+              console.log(`[helmsman-approval] acceptance ${id} approved → merge`)
             } else {
               acceptance?.rejectClear(appr.execution_id)
-              console.log(`[helmsman-approval] acceptance ${id} 拒绝（worktree 保留）`)
+              console.log(`[helmsman-approval] acceptance ${id} rejected (worktree kept)`)
             }
             return json(200, { ok: true, decision: outcome })
           }
@@ -176,7 +176,7 @@ export function apply(ctx) {
           if (!entry) return json(404, { error: 'unknown id' })
           clearTimeout(entry.timer)
           pending.delete(id)
-          // 前端 outcome: 'approved'|'rejected' → 引擎 ApprovalOutcome
+          // Frontend outcome: 'approved'|'rejected' → engine ApprovalOutcome
           const engineOutcome = body.outcome === 'rejected' ? 'rejected' : 'allowed-once'
           entry.resolve(engineOutcome)
           resolved.unshift({
@@ -185,11 +185,11 @@ export function apply(ctx) {
             status: outcome === 'rejected' ? 'rejected' : 'approved', at: entry.at,
           })
           if (resolved.length > 50) resolved.pop()
-          // 评论（可选）：批复时附带说明 → 送达 agent
+          // Comment (optional): an explanation attached to the decision → delivered to the agent
           if (typeof body.comment === 'string' && body.comment.trim() && entry.req.agent) {
             try {
               entry.req.agent.followup?.({ role: 'user', content: [{ type: 'text', text: body.comment }], source: { kind: 'user' } })
-            } catch { /* 送达失败不阻断批复 */ }
+            } catch { /* a failed delivery does not block the decision */ }
           }
           console.log(`[helmsman-approval] decided ${id} → ${outcome}`)
           json(200, { ok: true, decision: outcome })
@@ -200,16 +200,16 @@ export function apply(ctx) {
     },
   })
 
-  // POST /api/projects/:pid/approvals/resume-all 由 helmsman-api 的 /api/projects prefix 处理
-  // （避免跨插件 prefix 路由冲突）。注：B1 简化 —— 无挂起恢复语义，返回 ok。
+  // POST /api/projects/:pid/approvals/resume-all is handled by helmsman-api's /api/projects prefix route
+  // (avoids cross-plugin prefix route conflicts). Note: B1 simplification —— no suspend/resume semantics, returns ok.
 
-  // ---------- 策略沉淀（P1 O6：SQLite 持久化） ----------
+  // ---------- Policy capture (P1 O6: persisted in SQLite) ----------
   const rememberPolicy = (project_id, tool_name, outcome) => {
     if (storage) return storage.learnPolicy(project_id, 'tool', tool_name, outcome)
     return null
   }
 
-  // GET /api/policies?project= —— 策略列表
+  // GET /api/policies?project= —— policy list
   webServer.register({
     kind: 'exact',
     path: '/api/policies',
@@ -222,7 +222,7 @@ export function apply(ctx) {
     },
   })
 
-  // DELETE /api/policies/:id —— 删除策略
+  // DELETE /api/policies/:id —— delete a policy
   webServer.register({
     kind: 'prefix',
     path: '/api/policies',
@@ -239,7 +239,7 @@ export function apply(ctx) {
     },
   })
 
-  console.log('[helmsman-approval] 审批 answerer 已挂载，路由：/api/approvals*（前端契约兼容）')
+  console.log('[helmsman-approval] approval answerer mounted, routes: /api/approvals* (frontend-contract compatible)')
 }
 
 export default { name, inject, apply }

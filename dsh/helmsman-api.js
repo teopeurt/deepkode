@@ -1,15 +1,15 @@
-// [helmsman] B1 业务 API 插件：projects/cards/chats 路由（读 helmsmanBoard 投影）。
-// 兼容 v1 server-ts 的前端契约（web/src/api/client.ts + store/projection.ts）。
-// 数据源：helmsmanBoard 投影（session/event 实时折叠），无独立持久化（B1 阶段内存）。
-// 端点：
+// [helmsman] B1 business API plugin: projects/cards/chats routes (reads the helmsmanBoard projection).
+// Compatible with the v1 server-ts frontend contract (web/src/api/client.ts + store/projection.ts).
+// Data source: helmsmanBoard projection (folded live from session/event); no separate persistence (in-memory during B1).
+// Endpoints:
 //   GET  /api/projects                 → [{id,name,path,card_count,counts}]
 //   POST /api/projects                 {name,path} → {id}
 //   GET  /api/projects/:pid            → {id,name,path,cards:{<cardId>:CardState}}
 //   GET  /api/projects/:pid/cards      → CardSummary[]
 //   POST /api/projects/:pid/cards      {title,...} → {card_id}
-//   GET  /api/cards/:cardId            → CardDetail（含全部 executions）
-//   GET  /api/tasks/:sid               → TaskState（执行/会话状态）
-//   GET  /api/chats/:sid               → TaskState（简单会话）
+//   GET  /api/cards/:cardId            → CardDetail (includes all executions)
+//   GET  /api/tasks/:sid               → TaskState (execution/session state)
+//   GET  /api/chats/:sid               → TaskState (simple chat)
 //   GET  /api/projects/:pid/chats      → ChatSummary[]
 import { execSync, execFileSync } from 'node:child_process'
 import { readdirSync, statSync, readFileSync } from 'node:fs'
@@ -17,10 +17,10 @@ import { join, dirname, resolve, basename } from 'node:path'
 import { homedir } from 'node:os'
 import { SessionId } from '@deepseek-ai/dsh-session'
 
-// ---------- 执行经济学定价（D3-7：server-ts/pricing.ts 原样搬 + 工作日修正） ----------
-// DeepSeek V4 峰谷定价：高峰 = 北京时间周一至周五 9:00–12:00 ∪ 14:00–18:00，
-// 其余（含周末全天）为空闲时段，空闲 = 高峰半价。
-// 元/百万 tokens；reasoning 未单独公布 → 按输出价近似。
+// ---------- Execution-economics pricing (D3-7: server-ts/pricing.ts ported as-is + weekday fix) ----------
+// DeepSeek V4 peak/off-peak pricing: peak = Beijing time Mon–Fri 9:00–12:00 ∪ 14:00–18:00,
+// everything else (including all of the weekend) is off-peak; off-peak = half the peak price.
+// CNY per million tokens; reasoning is not priced separately → approximated with the output price.
 const PRICE_PEAK = {
   flash: { input: 3.0, output: 9.0, cacheRead: 0.1, reasoning: 9.0 },
   pro: { input: 9.0, output: 27.0, cacheRead: 0.3, reasoning: 27.0 },
@@ -29,12 +29,12 @@ const PRICE_OFFPEAK = {
   flash: { input: 1.5, output: 4.5, cacheRead: 0.05, reasoning: 4.5 },
   pro: { input: 4.5, output: 13.5, cacheRead: 0.15, reasoning: 13.5 },
 }
-/** 高峰判定：周一至周五（getUTCDay 1–5）且 9:00–12:00 ∪ 14:00–18:00（北京时间） */
+/** Peak check: Mon–Fri (getUTCDay 1–5) and 9:00–12:00 ∪ 14:00–18:00 (Beijing time) */
 function isPeakHour(now = new Date()) {
-  // 北京时间 = UTC+8：把时刻平移 8 小时后用 UTC 读星期/小时
+  // Beijing time = UTC+8: shift the instant by 8 hours, then read weekday/hour in UTC
   const bj = new Date(now.getTime() + 8 * 3600 * 1000)
-  const day = bj.getUTCDay() // 0=周日 … 6=周六
-  if (day === 0 || day === 6) return false // 周末全天空闲
+  const day = bj.getUTCDay() // 0=Sunday … 6=Saturday
+  if (day === 0 || day === 6) return false // weekends are off-peak all day
   const h = bj.getUTCHours()
   return (h >= 9 && h < 12) || (h >= 14 && h < 18)
 }
@@ -69,7 +69,7 @@ export function apply(ctx) {
     req.on('end', () => { try { resolve(buf ? JSON.parse(buf) : {}) } catch (e) { reject(e) } })
     req.on('error', reject)
   })
-  // 项目 Profile（P0 §2.6 三轴组合；SQLite 持久化）
+  // Project profiles (P0 §2.6 three-axis combination; persisted in SQLite)
   const ensureBuiltins = (pid) => {
     if (storage) storage.seedProfiles(pid)
     return storage ? storage.listProfiles(pid) : []
@@ -84,7 +84,7 @@ export function apply(ctx) {
     if (cardId) return proj.cards[cardId]?.executions[sid]
     return proj.chats[sid]
   }
-  /** 状态计数 [Pending, Running, Done, Failed, Cancelled]（按卡最新执行状态） */
+  /** Status counts [Pending, Running, Done, Failed, Cancelled] (by each card's latest execution status) */
   const countStatus = (p) => {
     const counts = [0, 0, 0, 0, 0]
     const idx = { Pending: 0, Running: 1, Done: 2, Failed: 3, Cancelled: 4 }
@@ -97,7 +97,7 @@ export function apply(ctx) {
     return counts
   }
 
-  // GET /api/projects —— 项目列表
+  // GET /api/projects —— project list
   webServer.register({
     kind: 'exact',
     path: '/api/projects',
@@ -119,7 +119,7 @@ export function apply(ctx) {
             if (!body.name || !body.path) return json(res, 400, { error: 'name and path required' })
             const pathNorm = String(body.path).trim().replace(/\/+$/, '')
             const name = String(body.name).trim()
-            // 仅移除可恢复：重新导入同目录 → 取消归档 + 复用原 id（v1 语义）
+            // Removal is recoverable: re-importing the same directory → unarchive + reuse the original id (v1 semantics)
             const archived = storage ? storage.findArchivedProject(pathNorm) : undefined
             let isRestored = false
             if (archived) {
@@ -140,7 +140,7 @@ export function apply(ctx) {
     },
   })
 
-  // /api/projects/:pid —— 项目详情/删除
+  // /api/projects/:pid —— project detail/delete
   webServer.register({
     kind: 'prefix',
     path: '/api/projects',
@@ -174,7 +174,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // GET /api/projects/:pid/cards —— 卡列表（轻量）
+      // GET /api/projects/:pid/cards —— card list (lightweight)
       const cards = pathname.match(/^\/api\/projects\/([^/]+)\/cards$/)
       if (cards && req.method === 'GET') {
         const p = getProject(decodeURIComponent(cards[1]))
@@ -202,7 +202,7 @@ export function apply(ctx) {
         })
         return json(res, 200, list)
       }
-      // POST /api/projects/:pid/cards —— 建卡（资产）+ 首代执行（建卡即自动跑）
+      // POST /api/projects/:pid/cards —— create card (asset) + first-generation execution (a new card runs automatically)
       if (cards && req.method === 'POST') {
         try {
           const body = await readBody(req)
@@ -212,7 +212,7 @@ export function apply(ctx) {
           const created = Date.now()
           board.ensureCard(p.id, {
             id: cardId,
-            title: body.title ?? '(无题)',
+            title: body.title ?? '(untitled)',
             description: body.description ?? '',
             kind: body.kind ?? 'task',
             milestone: body.milestone ?? null,
@@ -221,7 +221,7 @@ export function apply(ctx) {
             created_at: created,
           })
           if (storage) storage.upsertCard({
-            id: cardId, project_id: p.id, title: body.title ?? '(无题)',
+            id: cardId, project_id: p.id, title: body.title ?? '(untitled)',
             description: body.description ?? '', kind: body.kind ?? 'task',
             milestone: body.milestone ?? null, criteria: body.criteria ?? null,
             deps: body.deps ?? [], budget: body.budget ?? null, created_at: created,
@@ -231,7 +231,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // GET /api/projects/:pid/chats/archived —— 归档会话列表（含恢复入口数据）
+      // GET /api/projects/:pid/chats/archived —— archived chat list (includes data for the restore entry point)
       const chatsArch = pathname.match(/^\/api\/projects\/([^/]+)\/chats\/archived$/)
       if (chatsArch && req.method === 'GET') {
         const p = getProject(decodeURIComponent(chatsArch[1]))
@@ -247,12 +247,12 @@ export function apply(ctx) {
           }))
         return json(res, 200, list)
       }
-      // GET/POST /api/projects/:pid/chats —— 简单会话列表/新建
+      // GET/POST /api/projects/:pid/chats —— simple chat list/create
       const chats = pathname.match(/^\/api\/projects\/([^/]+)\/chats$/)
       if (chats && req.method === 'GET') {
         const p = getProject(decodeURIComponent(chats[1]))
         if (!p) return json(res, 404, { error: 'project not found' })
-        // 列表只显示未归档会话（archived 标记由归档端点设置）
+        // The list only shows unarchived chats (the archived flag is set by the archive endpoint)
         const list = Object.values(p.chats)
           .filter((t) => !t.archived)
           .map((t) => ({
@@ -268,7 +268,7 @@ export function apply(ctx) {
         const p = getProject(decodeURIComponent(chats[1]))
         if (!p) return json(res, 404, { error: 'project not found' })
         try {
-          // 简单会话：建 agent 但无首条指令（sendBrief=false，等用户第一次输入）
+          // Simple chat: create an agent with no initial instruction (sendBrief=false, wait for the user's first input)
           const { sid } = await tasks.createTask({
             cwd: p.path,
             brief: undefined,
@@ -281,19 +281,19 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/projects/:pid/approvals/resume-all —— 批量恢复（B1 简化 ok）
+      // POST /api/projects/:pid/approvals/resume-all —— bulk resume (B1 simplification: ok)
       const resumeAll = pathname.match(/^\/api\/projects\/([^/]+)\/approvals\/resume-all$/)
       if (resumeAll && req.method === 'POST') {
         return json(res, 200, { ok: true })
       }
-      // GET /api/projects/:pid/files —— 工作区文件树（v1 listFileTree 迁移）
+      // GET /api/projects/:pid/files —— workspace file tree (migrated from v1 listFileTree)
       const filesM = pathname.match(/^\/api\/projects\/([^/]+)\/files$/)
       if (filesM && req.method === 'GET') {
         const p = getProject(decodeURIComponent(filesM[1]))
         if (!p) return json(res, 404, { error: 'project not found' })
         return json(res, 200, listFileTree(p.path))
       }
-      // GET /api/projects/:pid/files/read?path= —— 文件预览（v1 readProjectFile 迁移）
+      // GET /api/projects/:pid/files/read?path= —— file preview (migrated from v1 readProjectFile)
       const fileReadM = pathname.match(/^\/api\/projects\/([^/]+)\/files\/read$/)
       if (fileReadM && req.method === 'GET') {
         const p = getProject(decodeURIComponent(fileReadM[1]))
@@ -307,14 +307,14 @@ export function apply(ctx) {
           return json(res, msg === 'not found' ? 404 : 403, { error: msg })
         }
       }
-      // GET /api/projects/:pid/repo-status —— git 仓库状态（v1 repoStatus 迁移）
+      // GET /api/projects/:pid/repo-status —— git repository status (migrated from v1 repoStatus)
       const repoM = pathname.match(/^\/api\/projects\/([^/]+)\/repo-status$/)
       if (repoM && req.method === 'GET') {
         const p = getProject(decodeURIComponent(repoM[1]))
         if (!p) return json(res, 404, { error: 'project not found' })
         return json(res, 200, repoStatus(p.path))
       }
-      // GET/PUT /api/projects/:pid/settings —— 项目设置（检索阈值/装配条数；v1 迁移，SQLite 持久化）
+      // GET/PUT /api/projects/:pid/settings —— project settings (retrieval threshold / brief entry count; migrated from v1, persisted in SQLite)
       const settingsM = pathname.match(/^\/api\/projects\/([^/]+)\/settings$/)
       if (settingsM) {
         const pid3 = decodeURIComponent(settingsM[1])
@@ -340,7 +340,7 @@ export function apply(ctx) {
         }
         return json(res, 405, { error: 'method not allowed' })
       }
-      // /api/projects/:pid/presets* —— 项目 Profile 管理（P0 §2.6 三轴组合；B1 内存存储）
+      // /api/projects/:pid/presets* —— project profile management (P0 §2.6 three-axis combination; in-memory store in B1)
       const presetsM = pathname.match(/^\/api\/projects\/([^/]+)\/presets(?:\/([^/]+))?(?:\/(default))?$/)
       if (presetsM) {
         const pid2 = decodeURIComponent(presetsM[1])
@@ -361,7 +361,7 @@ export function apply(ctx) {
             const prof = {
               id: `pf-${Date.now().toString(36)}`,
               project_id: pid2,
-              name: typeof body.name === 'string' ? body.name : '(未命名)',
+              name: typeof body.name === 'string' ? body.name : '(unnamed)',
               is_builtin: false,
               mode: body.mode, setting: body.setting, approval: body.approval, sandbox: body.sandbox,
               is_default: false,
@@ -391,7 +391,7 @@ export function apply(ctx) {
     },
   })
 
-  // /api/cards/* —— 卡操作（详情/状态标记/新执行代次/校准）
+  // /api/cards/* —— card operations (detail / status marking / new execution generation / calibration)
   webServer.register({
     kind: 'prefix',
     path: '/api/cards',
@@ -403,7 +403,7 @@ export function apply(ctx) {
         }
         return null
       }
-      // GET /api/cards/:cardId —— 卡详情（全部执行代次）
+      // GET /api/cards/:cardId —— card detail (all execution generations)
       const detail = pathname.match(/^\/api\/cards\/([^/]+)$/)
       if (detail && req.method === 'GET') {
         const found = findCard(decodeURIComponent(detail[1]))
@@ -411,7 +411,7 @@ export function apply(ctx) {
         const { project, card } = found
         return json(res, 200, { ...card, project_id: project.id, execution_count: card.exec_order.length })
       }
-      // POST /api/cards/:cardId/status —— 手动标记状态
+      // POST /api/cards/:cardId/status —— mark status manually
       const status = pathname.match(/^\/api\/cards\/([^/]+)\/status$/)
       if (status && req.method === 'POST') {
         const found = findCard(decodeURIComponent(status[1]))
@@ -434,7 +434,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/cards/:cardId/executions —— 起新执行代次（fork）
+      // POST /api/cards/:cardId/executions —— start a new execution generation (fork)
       const exec = pathname.match(/^\/api\/cards\/([^/]+)\/executions$/)
       if (exec && req.method === 'POST') {
         const found = findCard(decodeURIComponent(exec[1]))
@@ -443,7 +443,7 @@ export function apply(ctx) {
           const body = await readBody(req)
           const { sid } = await tasks.createTask({
             cwd: found.project.path,
-            brief: body.brief ?? `继续执行：${found.card.title}`,
+            brief: body.brief ?? `Continue: ${found.card.title}`,
             preset: body.preset,
             project_id: found.project.id,
             card_id: found.card.id,
@@ -453,7 +453,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/cards/:cardId/calibrate —— 需求校准（新执行代次 + calib 标记）
+      // POST /api/cards/:cardId/calibrate —— requirement calibration (new execution generation + calib flag)
       const calib = pathname.match(/^\/api\/cards\/([^/]+)\/calibrate$/)
       if (calib && req.method === 'POST') {
         const found = findCard(decodeURIComponent(calib[1]))
@@ -461,12 +461,12 @@ export function apply(ctx) {
         try {
           const { sid } = await tasks.createTask({
             cwd: found.project.path,
-            brief: `请为卡「${found.card.title}」产出验收标准提案，完成后输出【验收标准完毕】`,
+            brief: `Propose acceptance criteria for the card "${found.card.title}". When finished, output [ACCEPTANCE CRITERIA DONE]`,
             preset: found.card.criteria ? undefined : undefined,
             project_id: found.project.id,
             card_id: found.card.id,
           })
-          // 标记为校准会话（不算正常执行代次）
+          // Mark as a calibration session (does not count as a normal execution generation)
           const t = found.card.executions[sid]
           if (t) t.calib = true
           return json(res, 201, { card_id: found.card.id, session_id: sid, kind: 'calibrate' })
@@ -478,13 +478,13 @@ export function apply(ctx) {
     },
   })
 
-  // /api/tasks* —— 统一路由（调 helmsmanTasks 服务）
+  // /api/tasks* —— unified routes (call the helmsmanTasks service)
   webServer.register({
     kind: 'prefix',
     path: '/api/tasks',
     handler: async (req, res) => {
       const pathname = (req.url ?? '').split('?')[0]
-      // POST /api/tasks —— 建任务
+      // POST /api/tasks —— create task
       if (pathname === '/api/tasks' && req.method === 'POST') {
         try {
           const body = await readBody(req)
@@ -501,7 +501,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/tasks/:sid/comments —— 评论 = 控制通道
+      // POST /api/tasks/:sid/comments —— comments = control channel
       const comment = pathname.match(/^\/api\/tasks\/([^/]+)\/comments$/)
       if (comment && req.method === 'POST') {
         try {
@@ -513,17 +513,17 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // GET /api/tasks/:sid —— 任务状态（前端契约：TaskState 投影形状）
+      // GET /api/tasks/:sid —— task state (frontend contract: TaskState projection shape)
       const detail = pathname.match(/^\/api\/tasks\/([^/]+)$/)
       if (detail && req.method === 'GET') {
         const t = getTask(decodeURIComponent(detail[1]))
         if (t) return json(res, 200, t)
-        // 非投影会话（未注册/重启后）→ 实时查 agent 兜底
+        // Session not in the projection (unregistered / after restart) → fall back to querying the live agent
         const live = tasks.getTaskStatus(decodeURIComponent(detail[1]))
         if (live.status !== 'unknown') return json(res, 200, live)
         return json(res, 404, { error: 'task not found' })
       }
-      // POST /api/tasks/:sid/cancel —— 停止（引擎内 agent.cancel）
+      // POST /api/tasks/:sid/cancel —— stop (in-engine agent.cancel)
       const cancel = pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/)
       if (cancel && req.method === 'POST') {
         try {
@@ -533,7 +533,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/tasks/:sid/waiting —— 触发 Waiting{kind}（任务停在等待批复）
+      // POST /api/tasks/:sid/waiting —— trigger Waiting{kind} (task pauses awaiting a reply)
       const waiting = pathname.match(/^\/api\/tasks\/([^/]+)\/waiting$/)
       if (waiting && req.method === 'POST') {
         try {
@@ -556,20 +556,20 @@ export function apply(ctx) {
     },
   })
 
-  // /api/chats/* —— 简单会话（状态/发消息/提升/沉淀）
+  // /api/chats/* —— simple chats (status / send message / promote / save to KB)
   webServer.register({
     kind: 'prefix',
     path: '/api/chats',
     handler: async (req, res) => {
       const pathname = (req.url ?? '').split('?')[0]
-      // GET /api/chats/:sid —— 会话状态（TaskState 形状）
+      // GET /api/chats/:sid —— chat state (TaskState shape)
       const m = pathname.match(/^\/api\/chats\/([^/]+)$/)
       if (m && req.method === 'GET') {
         const t = getTask(decodeURIComponent(m[1]))
         if (!t) return json(res, 404, { error: 'chat not live' })
         return json(res, 200, t)
       }
-      // POST /api/chats/:sid —— 发消息（sendChat）
+      // POST /api/chats/:sid —— send message (sendChat)
       if (m && req.method === 'POST') {
         try {
           const body = await readBody(req)
@@ -580,7 +580,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/chats/:sid/fork —— 分叉会话（复制历史为新会话）
+      // POST /api/chats/:sid/fork —— fork the chat (copy history into a new session)
       const forkM = pathname.match(/^\/api\/chats\/([^/]+)\/fork$/)
       if (forkM && req.method === 'POST') {
         try {
@@ -595,7 +595,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/chats/:sid/archive —— 归档会话（移出列表；投影标记 archived）
+      // POST /api/chats/:sid/archive —— archive the chat (remove from list; projection marks archived)
       const archM = pathname.match(/^\/api\/chats\/([^/]+)\/archive$/)
       if (archM && req.method === 'POST') {
         const sid = decodeURIComponent(archM[1])
@@ -604,7 +604,7 @@ export function apply(ctx) {
         t.archived = true
         return json(res, 200, { ok: true })
       }
-      // POST /api/chats/:sid/restore —— 恢复归档会话（archived 标记清除）
+      // POST /api/chats/:sid/restore —— restore an archived chat (clear the archived flag)
       const restM = pathname.match(/^\/api\/chats\/([^/]+)\/restore$/)
       if (restM && req.method === 'POST') {
         const sid = decodeURIComponent(restM[1])
@@ -613,20 +613,20 @@ export function apply(ctx) {
         t.archived = false
         return json(res, 200, { ok: true })
       }
-      // POST /api/chats/:sid/title —— 用户改标题（引擎 sessionTitle.rename，钉住后自动生成停止）
+      // POST /api/chats/:sid/title —— user renames the title (engine sessionTitle.rename; once pinned, auto-generation stops)
       const titleM = pathname.match(/^\/api\/chats\/([^/]+)\/title$/)
       if (titleM && req.method === 'POST') {
         try {
           const body = await readBody(req)
           const title = typeof body.title === 'string' ? body.title.trim() : ''
           if (!title) return json(res, 400, { error: 'title required' })
-          // 用 sessionTitle.rename（需要 live session；改名后钉住，自动生成停止）
-          // live 会话：agent.session 是权威 live 实例；历史会话（重启后未 resume）：先 resume 再 rename
+          // Uses sessionTitle.rename (needs a live session; renaming pins the title and stops auto-generation)
+          // Live chat: agent.session is the authoritative live instance; historical chat (not resumed after a restart): resume first, then rename
           const sid = decodeURIComponent(titleM[1])
           const session = ctx.get('sessionTitle')
           let agent = ctx.get('agents')?.get?.(sid)
           if (!agent?.session) {
-            // 历史会话：resume 拿 live session（resume 后 title 写入 JSONL，重启重放保留）
+            // Historical chat: resume to get a live session (after resume the title is written to JSONL and survives restart replay)
             try {
               const resumed = await ctx.get('agents')?.resume?.({
                 resumeSessionId: SessionId(sid),
@@ -644,7 +644,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/chats/:sid/promote —— 提升为卡（会话上下文进卡，建卡自动跑）
+      // POST /api/chats/:sid/promote —— promote to a card (chat context goes into the card; the new card runs automatically)
       const promote = pathname.match(/^\/api\/chats\/([^/]+)\/promote$/)
       if (promote && req.method === 'POST') {
         try {
@@ -658,7 +658,7 @@ export function apply(ctx) {
           const cardId = `c-${Date.now().toString(36)}`
           board.ensureCard(pid, {
             id: cardId,
-            title: t.title ?? firstUser.slice(0, 40) ?? '从会话提升',
+            title: t.title ?? firstUser.slice(0, 40) ?? 'Promoted from chat',
             description: firstUser,
             kind: 'task',
             milestone: null,
@@ -671,7 +671,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // POST /api/chats/:sid/kb —— 沉淀到知识库（saveChatToKb）
+      // POST /api/chats/:sid/kb —— save to knowledge base (saveChatToKb)
       const toKb = pathname.match(/^\/api\/chats\/([^/]+)\/kb$/)
       if (toKb && req.method === 'POST') {
         try {
@@ -688,7 +688,7 @@ export function apply(ctx) {
     },
   })
 
-  // ---------- /api/presets —— 可用 agent 预设（读引擎 agentPresets 服务） ----------
+  // ---------- /api/presets —— available agent presets (reads the engine agentPresets service) ----------
   webServer.register({
     kind: 'exact',
     path: '/api/presets',
@@ -703,7 +703,7 @@ export function apply(ctx) {
     },
   })
 
-  // ---------- /api/metrics —— 执行度量（从投影派生；cost 按时段定价真实估算） ----------
+  // ---------- /api/metrics —— execution metrics (derived from the projection; cost is estimated from time-of-day pricing) ----------
   webServer.register({
     kind: 'exact',
     path: '/api/metrics',
@@ -742,7 +742,7 @@ export function apply(ctx) {
     },
   })
 
-  // GET /api/pricing —— 当前时段价表（前端展示/成本说明）
+  // GET /api/pricing —— price table for the current period (frontend display / cost explanation)
   webServer.register({
     kind: 'exact',
     path: '/api/pricing',
@@ -752,19 +752,19 @@ export function apply(ctx) {
       return json(res, 200, {
         peak,
         bjHour: (new Date(now.getTime() + 8 * 3600 * 1000)).getUTCHours(),
-        note: 'DeepSeek V4 峰谷定价：高峰 = 北京时间周一至周五 9:00–12:00 ∪ 14:00–18:00，其余（含周末全天）为空闲时段，空闲 = 高峰半价；元/百万 tokens',
+        note: 'DeepSeek V4 peak/off-peak pricing: peak = Beijing time Mon–Fri 9:00–12:00 ∪ 14:00–18:00; everything else (including all of the weekend) is off-peak; off-peak = half the peak price; CNY per million tokens',
         flash: peak ? PRICE_PEAK.flash : PRICE_OFFPEAK.flash,
         pro: peak ? PRICE_PEAK.pro : PRICE_OFFPEAK.pro,
       })
     },
   })
-  // ---------- /api/experiments/* —— 对照实验（B1 简化：建 A/B 对照卡，不持久化对比） ----------
+  // ---------- /api/experiments/* —— controlled experiments (B1 simplification: create A/B control cards, comparisons are not persisted) ----------
   webServer.register({
     kind: 'prefix',
     path: '/api/experiments',
     handler: async (req, res) => {
       const pathname = (req.url ?? '').split('?')[0]
-      // POST /api/experiments/run —— 跑一组任务（建卡自动执行）
+      // POST /api/experiments/run —— run a batch of tasks (new cards execute automatically)
       if (pathname === '/api/experiments/run' && req.method === 'POST') {
         try {
           const body = await readBody(req)
@@ -773,12 +773,12 @@ export function apply(ctx) {
           if (!p) return json(res, 404, { error: 'project not found' })
           if (!Array.isArray(body.tasks) || body.tasks.length === 0) return json(res, 400, { error: 'tasks required' })
           const brief = body.brief !== false
-          // internalize：true = 内化模式（B 组对照，WikiSkill 对比实验）——
-          // 命中编译成项目技能手册直接内嵌；false = 查 Wiki 装配（A 组）
+          // internalize: true = internalized mode (group B control, WikiSkill comparison experiment) ——
+          // hits are compiled into a project skill handbook and embedded directly; false = assemble by querying the Wiki (group A)
           const internalize = body.internalize === true
           const group = internalize ? 'B' : brief ? 'A' : 'C'
           const name = typeof body.name === 'string' && body.name ? body.name
-            : internalize ? 'B 内化技能' : brief ? 'A 查知识库' : 'C 裸跑'
+            : internalize ? 'B Internalized skill' : brief ? 'A Query knowledge base' : 'C Bare run'
           const created = []
           for (const t of body.tasks) {
             const title = typeof t?.title === 'string' ? t.title.trim() : ''
@@ -794,7 +794,7 @@ export function apply(ctx) {
               deps: [],
               created_at: Date.now(),
             })
-            // SQLite 落卡（createTask 的 execution FK 依赖 cards 表）
+            // Persist the card in SQLite (createTask's execution FK depends on the cards table)
             if (storage) storage.upsertCard({
               id: cardId, project_id: p.id, title,
               description: typeof t?.description === 'string' ? t.description : '',
@@ -816,7 +816,7 @@ export function apply(ctx) {
           return json(res, 500, { error: e?.message ?? String(e) })
         }
       }
-      // GET /api/experiments/compare?project= —— 对比（B1：从投影派生 A/B 概览）
+      // GET /api/experiments/compare?project= —— comparison (B1: derive an A/B overview from the projection)
       if (pathname === '/api/experiments/compare' && req.method === 'GET') {
         const url = new URL(req.url ?? '', 'http://localhost')
         const projectId = url.searchParams.get('project')
@@ -835,17 +835,17 @@ export function apply(ctx) {
     },
   })
 
-  // ---------- /api/fs/* —— 本地文件浏览（新建项目选目录） ----------
+  // ---------- /api/fs/* —— local file browsing (pick a directory for a new project) ----------
   webServer.register({
     kind: 'prefix',
     path: '/api/fs',
     handler: (req, res) => {
       const pathname = (req.url ?? '').split('?')[0]
       const url = new URL(req.url ?? '', 'http://localhost')
-      // POST /api/fs/pick —— 系统选目录对话框（macOS）
+      // POST /api/fs/pick —— native folder-picker dialog (macOS)
       if (pathname === '/api/fs/pick' && req.method === 'POST') {
         try {
-          const out = execSync('osascript -e \'POSIX path of (choose folder with prompt "选择项目目录")\'', {
+          const out = execSync('osascript -e \'POSIX path of (choose folder with prompt "Choose project directory")\'', {
             encoding: 'utf8',
             timeout: 60000,
           }).trim()
@@ -854,7 +854,7 @@ export function apply(ctx) {
           return json(res, 200, { cancelled: true })
         }
       }
-      // GET /api/fs/list?path= —— 目录浏览
+      // GET /api/fs/list?path= —— directory browsing
       if (pathname === '/api/fs/list' && req.method === 'GET') {
         const home = homedir()
         const canon = resolve(url.searchParams.get('path') || home)
@@ -874,7 +874,7 @@ export function apply(ctx) {
         entries.sort((a, b) => (b.is_dir ? 1 : 0) - (a.is_dir ? 1 : 0) || (a.name < b.name ? -1 : 1))
         return json(res, 200, { path: canon, parent: dirname(canon), entries })
       }
-      // GET /api/fs/find?name=&max= —— 按名搜索（广度优先，限深限数）
+      // GET /api/fs/find?name=&max= —— search by name (breadth-first, depth- and count-limited)
       if (pathname === '/api/fs/find' && req.method === 'GET') {
         const name = url.searchParams.get('name') ?? ''
         if (!name) return json(res, 400, { error: 'empty name' })
@@ -907,11 +907,11 @@ export function apply(ctx) {
     },
   })
 
-  console.log('[helmsman-api] 业务 API 已注册：/api/projects* /api/cards* /api/tasks* /api/chats* /api/fs* /api/files*')
+  console.log('[helmsman-api] business API registered: /api/projects* /api/cards* /api/tasks* /api/chats* /api/fs* /api/files*')
 }
 
-// ---------- 工作区文件树（v1 listFileTree 迁移） ----------
-// 过滤：node_modules/.git/.sessions/.npm-cache/dist/*.db/.DS_Store；限深 5、每目录 100 项。
+// ---------- Workspace file tree (migrated from v1 listFileTree) ----------
+// Filtered: node_modules/.git/.sessions/.npm-cache/dist/*.db/.DS_Store; max depth 5, 100 entries per directory.
 function listFileTree(dir, depth = 0) {
   const SKIP = new Set(['node_modules', '.git', '.sessions', '.npm-cache', 'dist', 'research', 'docs-archive', 'design-mockups', '.DS_Store'])
   const name = basename(dir)
@@ -931,13 +931,13 @@ function listFileTree(dir, depth = 0) {
       const st = statSync(full)
       if (st.isDirectory()) out.children.push(listFileTree(full, depth + 1))
       else out.children.push({ name: n, type: 'file' })
-    } catch { /* 跳过不可读 */ }
+    } catch { /* skip unreadable entries */ }
   }
   return out
 }
 
-// ---------- 文件预览读取（v1 readProjectFile 迁移） ----------
-// 安全：路径解析到工作区内（防穿越）；路径段命中 SKIP/隐藏 → 拒绝；大小 ≤ 256KB（超出截断标记）；二进制（含 NUL）→ 不返回内容。
+// ---------- File preview read (migrated from v1 readProjectFile) ----------
+// Safety: path must resolve inside the workspace (no traversal); a path segment matching SKIP/hidden → rejected; size ≤ 256KB (larger is flagged truncated); binary (contains NUL) → content not returned.
 const SKIP_SET = new Set(['node_modules', '.git', '.sessions', '.npm-cache', 'dist', 'research', 'docs-archive', 'design-mockups', '.DS_Store'])
 function readProjectFile(workspace, rel) {
   if (!rel || rel.includes('\0')) throw new Error('bad path')
@@ -953,15 +953,15 @@ function readProjectFile(workspace, rel) {
     return { path: rel, name: basename(full), size, content: '', truncated: true, binary: false }
   }
   const buf = readFileSync(full)
-  // 二进制检测：前 8KB 含 NUL
+  // Binary detection: NUL within the first 8KB
   const head = buf.subarray(0, 8192)
   const binary = head.includes(0)
   if (binary) return { path: rel, name: basename(full), size, content: '', truncated: false, binary: true }
   return { path: rel, name: basename(full), size, content: buf.toString('utf8'), truncated: false, binary: false }
 }
 
-// ---------- git 仓库状态（v1 repoStatus 迁移） ----------
-// execFileSync 不经 shell：避免 %(refname:short) 这类参数被 sh 解析。
+// ---------- git repository status (migrated from v1 repoStatus) ----------
+// execFileSync bypasses the shell: avoids arguments like %(refname:short) being parsed by sh.
 function repoStatus(workspace) {
   const git = (args, opts = {}) => {
     try {
@@ -987,12 +987,12 @@ function repoStatus(workspace) {
     const code = y !== ' ' ? y : x
     return { code, staged: x !== ' ' && x !== '?', path }
   })
-  // 分支列表（过滤任务隔离区 worktree 分支 —— helmsman/card-… 内部噪音）
+  // Branch list (filter out task-isolation worktree branches —— helmsman/card-… internal noise)
   const branches = git(['branch', '--format=%(refname:short)'])
     .split('\n').filter(Boolean)
     .filter((name) => !name.startsWith('helmsman/card-'))
     .map((name) => ({ name, current: name === branch }))
-  // 提交历史（最近 6 条：hash / 相对时间 / subject）
+  // Commit history (latest 6: hash / relative time / subject)
   const history = git(['log', '-6', '--format=%h%x09%ar%x09%s'])
     .split('\n').filter(Boolean)
     .map((line) => {

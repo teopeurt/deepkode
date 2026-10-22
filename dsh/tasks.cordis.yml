@@ -1,12 +1,12 @@
-# helmsman — dsh 引擎组合（粒度 spine + ACP 控制通道）
-# 观察通道：JSONL 会话日志（.sessions/）tail —— model-visible ⟺ logged 是权威事件源。
-# 无 session-query：架构决策（见 architecture-v1.md §2.1），不引入演示 bundle 的派生索引。
+# helmsman — dsh engine composition (granular spine + ACP control channel)
+# Observation channel: tailing the JSONL session logs (.sessions/) —— model-visible ⟺ logged is the authoritative event source.
+# No session-query: an architectural decision (see architecture-v1.md §2.1); the demo bundle's derived index is not used.
 
-# 用户设置（$DSH_HOME/settings.yaml，热重载）
+# User settings ($DSH_HOME/settings.yaml, hot-reloaded)
 - id: settings
   name: '@deepseek-ai/dsh-settings-file'
 
-# 凭据存储：进程环境 over $DSH_HOME/.credentials.yaml；DEEPSEEK_API_KEY 在此解析，不内联。
+# Credential store: process environment over $DSH_HOME/.credentials.yaml; DEEPSEEK_API_KEY is resolved here, never inlined.
 - id: credentials
   name: '@deepseek-ai/dsh-credentials-local'
 
@@ -29,7 +29,7 @@
   config:
     timeoutMs: 60000
 
-# Spine bundle：不预建 agent（ACP 每个 session/new 建一个）；persona 即 helmsman 身份。
+# Spine bundle: no pre-built agents (ACP creates one per session/new); the persona is the helmsman identity.
 - id: agent-spine
   name: '@deepseek-ai/dsh-agent-spine-demo'
   config:
@@ -41,7 +41,7 @@
 
       You execute one task per session; the task brief arrives as the first user message and is authoritative. Verify your work by running code or tests. Keep answers brief and factual. When a task depends on project knowledge you lack, say so instead of guessing.
 
-# JSONL 会话日志：观察通道的数据源（Rust 侧 tail）。
+# JSONL session logs: the data source of the observation channel (tailed on the Rust side).
 - id: persistence
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
   config:
@@ -116,9 +116,9 @@
   config:
     allowParallelInProgress: true
 
-# 每项目沙箱：workspace-write —— 每个任务（会话）的写根 = 会话 cwd（用户选择的项目目录），
-# 只能写自己的项目目录 + /tmp，不能越界写其他项目或系统任意位置（spec：任务以项目为隔离单位）。
-# 公开版（0.1.0-rc.7）：fs-sandbox 直接替代 fs-local（不再并存），配套 ctx.sandboxPolicy。
+# Per-project sandbox: workspace-write —— each task's (session's) write root = the session cwd (the project directory the user picked);
+# it can only write its own project directory + /tmp, never other projects or arbitrary system locations (spec: tasks are isolated per project).
+# Public release (0.1.0-rc.7): fs-sandbox replaces fs-local outright (they no longer coexist), paired with ctx.sandboxPolicy.
 - id: sandbox-policy
   name: '@deepseek-ai/dsh-sandbox-policy'
   config:
@@ -133,32 +133,32 @@
   name: '@deepseek-ai/dsh-tool-fs'
 
 
-# 命令级白名单（P1）：工具审批缝 —— guard 预设命中危险命令返回 ask 时，
-# 经 approval/request waterfall 路由到 dsh-acp 桥 → ACP requestPermission → Helmsman 批复队列。
-# 缺 answerer 时 fail-closed（拒绝命令，不静默放行）。
+# Command-level allowlist (P1): the tool-approval seam —— when the guard preset matches a dangerous command and returns ask,
+# it is routed via the approval/request waterfall to the dsh-acp bridge → ACP requestPermission → the Helmsman approval queue.
+# Without an answerer it fails closed (the command is rejected, never silently allowed).
 - id: approval
   name: '@deepseek-ai/dsh-user-approval'
   config:
     policy: ask
 
 
-# 预设 roster（P0 预设落地）：每任务可按 _meta.agentPreset 挂不同工具/人格。
-# 根目录 = 本仓库预设（system）+ ~/.dsh/.agent-presets（user，自动附加）。
+# Preset roster (P0 presets): each task can mount different tools/personas via _meta.agentPreset.
+# Roots = this repo's presets (system) + ~/.dsh/.agent-presets (user, appended automatically).
 - id: agent-presets
   name: '@deepseek-ai/dsh-agent-presets'
   config:
-    # default: 引擎 preset 仅作可选工具集定制（Profile 主路径由产品服务解析三轴，不传 presetId 时不 mount）；
-    # schema 要求 default 必填，占位为 code-concise（无害：产品服务不传即不生效）。
+    # default: engine presets are only an optional tool-set customization (the main Profile path has the product service resolve the three axes; nothing is mounted when no presetId is passed);
+    # the schema requires default, so code-concise is a placeholder (harmless: it has no effect unless the product service passes it).
     default: code-concise
     roots:
       - path: !!js "process.cwd() + '/agent-presets'"
         trust: system
 
-# ACP 控制通道（stdin/stdout）：Rust 产品服务的控制面。
-# 选中模型 → installModelSelection 挂 agent 请求路由（下一轮生效）。
+# ACP control channel (stdin/stdout): the control plane of the Rust product service.
+# the selected model → installModelSelection attaches it to the agent's request routing (takes effect next turn).
 - id: model-select
   name: ./model-select.js
-# D3-2 编排：引擎内任务编排 + HTTP 网关
+# D3-2 orchestration: in-engine task orchestration + HTTP gateway
 - id: webserver
   name: '@deepseek-ai/dsh-host-webserver'
   config:

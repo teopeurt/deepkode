@@ -40,9 +40,9 @@ class Storage {
         description   TEXT NOT NULL DEFAULT '',
         kind          TEXT NOT NULL DEFAULT 'task',
         milestone     TEXT,
-        criteria_json TEXT NOT NULL DEFAULT '[]',  -- \u9700\u6C42\u5951\u7EA6\uFF1A\u9A8C\u6536\u6807\u51C6\uFF08'[]'=\u65E0\uFF0C\u517C\u5BB9\u65E7\u5E93 NOT NULL\uFF09
-        deps_json     TEXT NOT NULL DEFAULT '[]',  -- \u4F9D\u8D56\u5951\u7EA6\uFF1A\u5361 id \u6570\u7EC4\uFF08\u76EE\u6807\u5951\u7EA6 taskgraph\uFF09
-        budget        REAL,                         -- \u6267\u884C\u9884\u7B97\uFF08\xA5\uFF0Copt-in\uFF1BWaiting{cost}\uFF09
+        criteria_json TEXT NOT NULL DEFAULT '[]',  -- requirement contract: acceptance criteria ('[]'=none, compatible with old NOT NULL schema)
+        deps_json     TEXT NOT NULL DEFAULT '[]',  -- dependency contract: array of card ids (target contract: taskgraph)
+        budget        REAL,                         -- execution budget (CNY, opt-in; Waiting{cost})
         created_at    INTEGER NOT NULL,
         updated_at    INTEGER NOT NULL
       );
@@ -75,12 +75,12 @@ class Storage {
         PRIMARY KEY (project_id, key)
       );
 
-      -- P1 \u7B56\u7565\u5B66\u4E60\uFF08O6\uFF1A\u6BCF\u6B21\u6279\u590D\u53EF\u6C89\u6DC0\u7B56\u7565\u539F\u5B50\uFF1B\u547D\u4EE4\u6A21\u5F0F\u7EA7\u767D\u540D\u5355\u7B49\u5F15\u64CE\u7F1D\uFF0C\u5148\u843D\u6279\u590D\u7B56\u7565\uFF09
+      -- P1 policy learning (O6: every approval decision can be captured as a policy atom; command-pattern allowlists etc. wait on an engine seam, so approval policies land first)
       CREATE TABLE IF NOT EXISTS policies (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id  TEXT NOT NULL,
-        kind        TEXT NOT NULL,              -- \u6279\u590D\u7C7B\u578B\uFF1Acheckpoint | calibrate | plan | acceptance | permission
-        scope       TEXT NOT NULL,              -- \u5361\u7C7B\u578B\uFF1Arequirement | bug | task | global
+        kind        TEXT NOT NULL,              -- approval type: checkpoint | calibrate | plan | acceptance | permission
+        scope       TEXT NOT NULL,              -- card type: requirement | bug | task | global
         outcome     TEXT NOT NULL,              -- approved | rejected
         count       INTEGER NOT NULL DEFAULT 1,
         created_at  INTEGER NOT NULL,
@@ -89,29 +89,29 @@ class Storage {
       );
       CREATE INDEX IF NOT EXISTS idx_policies_project ON policies(project_id);
 
-      -- A \u7EC4\u4F1A\u8BDD\u5C42\u95ED\u73AF\uFF1A\u7B80\u5355\u4F1A\u8BDD\uFF08chat\uFF09\u6301\u4E45\u5316\u6807\u8BB0\uFF08\u91CD\u542F\u540E\u6062\u590D\u4E3A\u72EC\u7ACB\u4F1A\u8BDD\uFF0C\u4E0D\u5EFA\u9690\u5F0F\u5361\uFF09
+      -- Group A chat-layer loop: persistence flag for simple chats (restored as standalone chats after restart; no implicit card is created)
       CREATE TABLE IF NOT EXISTS chat_sessions (
         session_id  TEXT PRIMARY KEY,
         project_id  TEXT NOT NULL,
         created_at  INTEGER NOT NULL
       );
 
-      -- M4 \u77E5\u8BC6\u5E93\uFF08architecture \xA74 kb_notes\uFF1B\u53CC\u65F6\u6001 + \u4FE1\u4EFB\u5206\u7EA7 + \u51FA\u5904\uFF09
+      -- M4 knowledge base (architecture §4 kb_notes; bitemporal + trust levels + provenance)
       CREATE TABLE IF NOT EXISTS kb_notes (
         id            TEXT PRIMARY KEY,
         project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         title         TEXT NOT NULL,
-        content_json  TEXT NOT NULL,            -- string[]\uFF08\u7ED3\u6784\u5316\u884C\uFF09
+        content_json  TEXT NOT NULL,            -- string[] (structured lines)
         tags_json     TEXT NOT NULL DEFAULT '[]',
         keywords_json TEXT NOT NULL DEFAULT '[]',
         summary       TEXT NOT NULL DEFAULT '',
-        anti_patterns_json TEXT NOT NULL DEFAULT '[]',  -- \u53CD\u6A21\u5F0F\uFF08WikiSkill\u542F\u793A\uFF1A\u5751/\u7981\u5FCC\uFF09
-        applicability TEXT NOT NULL DEFAULT '',         -- \u9002\u7528\u6761\u4EF6\uFF08\u4EC0\u4E48\u65F6\u5019\u8BE5\u7528\u8FD9\u6761\u77E5\u8BC6\uFF09
+        anti_patterns_json TEXT NOT NULL DEFAULT '[]',  -- anti-patterns (inspired by WikiSkill: pitfalls / things to avoid)
+        applicability TEXT NOT NULL DEFAULT '',         -- applicability (when this knowledge should be used)
         links_json    TEXT NOT NULL DEFAULT '[]',
         source_kind   TEXT NOT NULL,            -- 'task' | 'subagent' | 'human' | 'project'
-        source_ref    TEXT NOT NULL,            -- \u5361/\u4F1A\u8BDD/\u9879\u76EE id
+        source_ref    TEXT NOT NULL,            -- card / session / project id
         valid_from    INTEGER NOT NULL,
-        valid_until   INTEGER,                  -- NULL = \u5F53\u524D\u6709\u6548
+        valid_until   INTEGER,                  -- NULL = currently valid
         invalidated_by TEXT,
         version       INTEGER NOT NULL DEFAULT 1,
         trust         TEXT NOT NULL DEFAULT 'unverified',  -- human-approved | agent-generated | unverified
@@ -121,7 +121,7 @@ class Storage {
       CREATE INDEX IF NOT EXISTS idx_kb_project ON kb_notes(project_id);
       CREATE INDEX IF NOT EXISTS idx_kb_valid ON kb_notes(project_id, valid_until);
 
-      -- M4 \u5EA6\u91CF\u95ED\u73AF\uFF08\xA75.2\uFF1A\u7B80\u62A5\u547D\u4E2D\u7387 / \u5F15\u7528\u951A\u70B9 / \u5BF9\u7167\u5B9E\u9A8C\u7EC4\uFF09
+      -- M4 metrics loop (§5.2: brief hit rate / citation anchors / control-experiment groups)
       CREATE TABLE IF NOT EXISTS metrics (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id    TEXT NOT NULL,
@@ -131,28 +131,28 @@ class Storage {
         cited_entries_json TEXT NOT NULL DEFAULT '[]',
         turns         INTEGER NOT NULL DEFAULT 0,
         steps         INTEGER NOT NULL DEFAULT 0,
-        group_tag     TEXT,                       -- \u5BF9\u7167\u5B9E\u9A8C\u7EC4\uFF08'A'=\u5E26\u88C5\u914D / 'B'=\u88F8\u8DD1\uFF09
-        verified      INTEGER,                    -- \u9A8C\u6536\u7ED3\u679C\uFF081=\u901A\u8FC7 / 0=\u5931\u8D25 / NULL=\u65E0\u9A8C\u6536\u6807\u51C6\uFF09
+        group_tag     TEXT,                       -- control-experiment group ('A'=with assembly / 'B'=bare run)
+        verified      INTEGER,                    -- acceptance result (1=passed / 0=failed / NULL=no acceptance criteria)
         cost          REAL NOT NULL DEFAULT 0,
         cache_hit     REAL NOT NULL DEFAULT 0,
-        in_tokens     INTEGER NOT NULL DEFAULT 0,  -- \u8F93\u5165 token\uFF08\u5168\u4EF7\u90E8\u5206\uFF09
-        cache_tokens  INTEGER NOT NULL DEFAULT 0,  -- \u7F13\u5B58\u547D\u4E2D\u8F93\u5165 token\uFF081/50 \u4EF7\uFF09
-        out_tokens    INTEGER NOT NULL DEFAULT 0,  -- \u8F93\u51FA token
-        reason_tokens INTEGER NOT NULL DEFAULT 0,  -- \u63A8\u7406 token
+        in_tokens     INTEGER NOT NULL DEFAULT 0,  -- input tokens (full-price portion)
+        cache_tokens  INTEGER NOT NULL DEFAULT 0,  -- cache-hit input tokens (1/50 price)
+        out_tokens    INTEGER NOT NULL DEFAULT 0,  -- output tokens
+        reason_tokens INTEGER NOT NULL DEFAULT 0,  -- reasoning tokens
         created_at    INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_metrics_project ON metrics(project_id);
 
-      -- P0 \u6279\u590D\u961F\u5217\uFF08architecture \xA74 approvals\uFF1B\u4E00\u7B49\u8868\u9762 + \u552F\u4E00\u4E8B\u5B9E\u6765\u6E90\uFF09
+      -- P0 approval queue (architecture §4 approvals; first-class surface + single source of truth)
       CREATE TABLE IF NOT EXISTS approvals (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id  TEXT NOT NULL,
-        execution_id TEXT NOT NULL,          -- = \u4F1A\u8BDD id\uFF08D1.2\uFF09
+        execution_id TEXT NOT NULL,          -- = session id (D1.2)
         kind        TEXT NOT NULL,           -- 'plan' | 'permission' | 'acceptance' | 'cost'
         payload_json TEXT NOT NULL DEFAULT '{}',
-        reason      TEXT,                    -- \u7B49\u5F85\u539F\u56E0\uFF08agent \u505C\u4E0B\u65F6\u8BF4\u660E\uFF09
-        outcome     TEXT,                    -- 'approved' | 'rejected' | 'suspended' | NULL=\u5F85\u6279\u590D
-        comment     TEXT,                    -- \u6279\u590D\u51B3\u7B56\u5FC5\u987B\u643A\u5E26\u8BC4\u8BBA\u9001\u8FBE agent
+        reason      TEXT,                    -- reason for waiting (explained by the agent when it stops)
+        outcome     TEXT,                    -- 'approved' | 'rejected' | 'suspended' | NULL=awaiting decision
+        comment     TEXT,                    -- an approval decision must carry a comment that is delivered to the agent
         created_at  INTEGER NOT NULL,
         decided_at  INTEGER,
         suspended_at INTEGER
@@ -160,7 +160,7 @@ class Storage {
       CREATE INDEX IF NOT EXISTS idx_approvals_project ON approvals(project_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(project_id, outcome);
 
-      -- P0 \u9884\u8BBE Profile\uFF08\xA72.6\uFF1A\u4E09\u8F74\u7EC4\u5408\u6536\u655B\u4E3A\u547D\u540D Profile\uFF1B\u9879\u76EE\u7EA7\u7BA1\u7406\uFF09
+      -- P0 preset profiles (§2.6: three-axis combinations collapsed into named profiles; managed per project)
       CREATE TABLE IF NOT EXISTS profiles (
         id          TEXT NOT NULL,
         project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -198,7 +198,7 @@ class Storage {
       this.db.exec(`ALTER TABLE executions ADD COLUMN worktree_path TEXT`);
       this.db.exec(`ALTER TABLE executions ADD COLUMN worktree_branch TEXT`);
     }
-    // WikiSkill 启示：知识条目补反模式 + 适用条件（老库 ALTER 迁移）
+    // Inspired by WikiSkill: knowledge entries gain anti-patterns + applicability (ALTER migration for old databases)
     const kbCols = this.db.prepare(`SELECT name FROM pragma_table_info('kb_notes')`).all();
     const kbHave = new Set(kbCols.map((c) => c.name));
     if (!kbHave.has("anti_patterns_json")) {
@@ -208,7 +208,7 @@ class Storage {
       this.db.exec(`ALTER TABLE kb_notes ADD COLUMN applicability TEXT NOT NULL DEFAULT ''`);
     }
   }
-  // ---------- 项目 ----------
+  // ---------- Projects ----------
   upsertProject(id, name, path, configJson) {
     const t = now();
     this.db.prepare(
@@ -249,7 +249,7 @@ class Storage {
   deleteProject(id) {
     this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
   }
-  // ---------- 卡片快照 ----------
+  // ---------- Card snapshots ----------
   upsertCard(c) {
     const t = now();
     this.db.prepare(
@@ -271,7 +271,7 @@ class Storage {
     const row = this.db.prepare("SELECT id, project_id, title, description, kind, milestone, criteria_json, deps_json, budget, created_at FROM cards WHERE id = ?").get(id);
     return row ? rowToCard(row) : void 0;
   }
-  // ---------- 执行快照 ----------
+  // ---------- Execution snapshots ----------
   upsertExecution(e) {
     const t = now();
     this.db.prepare(
@@ -303,7 +303,7 @@ class Storage {
   setExecutionWorktree(id, path, branch) {
     this.db.prepare("UPDATE executions SET worktree_path = ?, worktree_branch = ?, updated_at = ? WHERE id = ?").run(path, branch, now(), id);
   }
-  // ---------- 设置 ----------
+  // ---------- Settings ----------
   setConfig(projectId, key, value) {
     this.db.prepare(
       "INSERT INTO settings (project_id, key, value) VALUES (?, ?, ?) ON CONFLICT(project_id, key) DO UPDATE SET value=excluded.value"
@@ -317,7 +317,7 @@ class Storage {
     const row = this.db.prepare("SELECT config_json FROM projects WHERE id = ?").get(id);
     return row?.config_json;
   }
-  // ---------- 知识库（M4） ----------
+  // ---------- Knowledge base (M4) ----------
   upsertNote(n) {
     const t = Date.now();
     this.db.prepare(
@@ -353,12 +353,12 @@ class Storage {
       t
     );
   }
-  /** 当前有效的笔记（双时态过滤）。 */
+  /** Currently valid notes (bitemporal filter). */
   listNotes(projectId) {
     const rows = this.db.prepare("SELECT * FROM kb_notes WHERE project_id = ? AND (valid_until IS NULL OR valid_until > ?) ORDER BY created_at DESC").all(projectId, Date.now());
     return rows.map(rowToNote);
   }
-  /** 全部笔记（含失效，审计/演化用）。 */
+  /** All notes (including invalidated ones, for audit/evolution). */
   listAllNotes(projectId) {
     const rows = this.db.prepare("SELECT * FROM kb_notes WHERE project_id = ? ORDER BY created_at DESC").all(projectId);
     return rows.map(rowToNote);
@@ -367,14 +367,14 @@ class Storage {
     const row = this.db.prepare("SELECT * FROM kb_notes WHERE id = ?").get(id);
     return row ? rowToNote(row) : void 0;
   }
-  /** 边失效：把 id 标记为被 newNoteId 推翻。 */
+  /** Edge invalidation: mark id as superseded by newNoteId. */
   invalidateNote(id, newNoteId, at) {
     this.db.prepare("UPDATE kb_notes SET valid_until = ?, invalidated_by = ?, updated_at = ? WHERE id = ? AND valid_until IS NULL").run(at, newNoteId, at, id);
   }
   deleteNote(id) {
     this.db.prepare("DELETE FROM kb_notes WHERE id = ?").run(id);
   }
-  // ---------- 度量（M4 §5.2） ----------
+  // ---------- Metrics (M4 §5.2) ----------
   insertMetric(m) {
     this.db.prepare(
       `INSERT INTO metrics (project_id, task_id, brief_snapshot_json, outcome, cited_entries_json, turns, steps, group_tag, verified, cost, cache_hit, in_tokens, cache_tokens, out_tokens, reason_tokens, created_at)
@@ -402,7 +402,7 @@ class Storage {
     const rows = this.db.prepare("SELECT * FROM metrics WHERE project_id = ? ORDER BY created_at DESC LIMIT 200").all(projectId);
     return rows.map(rowToMetric);
   }
-  // ---------- 批复队列（P0：一等表面 + 唯一事实来源） ----------
+  // ---------- Approval queue (P0: first-class surface + single source of truth) ----------
   insertApproval(a) {
     const info = this.db.prepare(
       `INSERT INTO approvals (project_id, execution_id, kind, payload_json, reason, outcome, comment, created_at)
@@ -410,17 +410,17 @@ class Storage {
     ).run(a.project_id, a.execution_id, a.kind, JSON.stringify(a.payload), a.reason ?? null, a.outcome ?? null, a.comment ?? null, a.created_at);
     return Number(info.lastInsertRowid);
   }
-  /** 待批复队列（按项目；含等待原因与挂起标记）。 */
+  /** Suspended approvals queue (per project; includes the waiting reason and suspended flag). */
   listSuspendedApprovals(projectId) {
     const rows = this.db.prepare("SELECT * FROM approvals WHERE project_id = ? AND outcome = 'suspended' ORDER BY suspended_at").all(projectId);
     return rows.map(rowToApproval);
   }
-  /** 恢复挂起批复（O5：原会话从 Waiting 点继续，模式不丢） */
+  /** Resume a suspended approval (O5: the original session continues from the Waiting point without losing its mode) */
   resumeApproval(id) {
     const info = this.db.prepare("UPDATE approvals SET outcome = NULL, decided_at = NULL, suspended_at = NULL WHERE id = ? AND outcome = ?").run(id, "suspended");
     return info.changes > 0;
   }
-  /** 批量恢复（O5：恢复 = 全部挂起项重新进队列） */
+  /** Bulk resume (O5: resume = all suspended items re-enter the queue) */
   resumeAllApprovals(projectId) {
     const info = this.db.prepare("UPDATE approvals SET outcome = NULL, decided_at = NULL, suspended_at = NULL WHERE project_id = ? AND outcome = ?").run(projectId, "suspended");
     return info.changes;
@@ -429,7 +429,7 @@ class Storage {
     const rows = this.db.prepare("SELECT * FROM approvals WHERE project_id = ? AND outcome IS NULL ORDER BY created_at").all(projectId);
     return rows.map(rowToApproval);
   }
-  /** 全量批复（含已决策，审计）。 */
+  /** All approvals (including decided ones, for audit). */
   listApprovals(projectId, limit = 100) {
     const rows = this.db.prepare("SELECT * FROM approvals WHERE project_id = ? ORDER BY created_at DESC LIMIT ?").all(projectId, limit);
     return rows.map(rowToApproval);
@@ -438,20 +438,20 @@ class Storage {
     const row = this.db.prepare("SELECT * FROM approvals WHERE id = ?").get(id);
     return row ? rowToApproval(row) : void 0;
   }
-  /** 决策批复：approve/reject + 评论；返回是否成功（已决策的不再改）。 */
+  /** Decide an approval: approve/reject + comment; returns whether it succeeded (already-decided ones are not changed). */
   decideApproval(id, outcome, comment) {
     const info = this.db.prepare(
       `UPDATE approvals SET outcome = ?, comment = ?, decided_at = ? WHERE id = ? AND outcome IS NULL`
     ).run(outcome, comment, Date.now(), id);
     return info.changes > 0;
   }
-  /** 挂起：超时自动挂起（O5：默认 30 分钟，危险操作永不自动放行）。 */
+  /** Suspend: automatic suspension on timeout (O5: default 30 minutes; dangerous operations are never auto-approved). */
   suspendApproval(id) {
     const info = this.db.prepare("UPDATE approvals SET outcome = ?, suspended_at = ? WHERE id = ? AND outcome IS NULL").run("suspended", Date.now(), id);
     return info.changes > 0;
   }
-  // ---------- 策略学习（P1 O6：批复 → 策略原子，规则可查看可删除） ----------
-  /** 学习一条策略：同 (kind, scope, outcome) 累计 count；返回最新规则。 */
+  // ---------- Policy learning (P1 O6: approval → policy atom; rules can be viewed and deleted) ----------
+  /** Learn one policy: accumulate count for the same (kind, scope, outcome); returns the latest rule. */
   learnPolicy(projectId, kind, scope, outcome) {
     const t = Date.now();
     this.db.prepare(
@@ -474,14 +474,14 @@ class Storage {
     const info = this.db.prepare("DELETE FROM policies WHERE id = ?").run(id);
     return info.changes > 0;
   }
-  // ---------- 简单会话（A 组：chat 持久化标记） ----------
+  // ---------- Simple chats (group A: chat persistence flag) ----------
   registerChat(sessionId, projectId) {
     this.db.prepare("INSERT OR IGNORE INTO chat_sessions (session_id, project_id, created_at) VALUES (?, ?, ?)").run(sessionId, projectId, Date.now());
   }
   isChat(sessionId) {
     return !!this.db.prepare("SELECT 1 FROM chat_sessions WHERE session_id = ?").get(sessionId);
   }
-  /** 提升为任务后删除 chat 标记（会话转卡执行） */
+  /** Remove the chat flag after promotion to a task (chat becomes a card execution) */
   unregisterChat(sessionId) {
     this.db.prepare("DELETE FROM chat_sessions WHERE session_id = ?").run(sessionId);
   }
@@ -489,8 +489,8 @@ class Storage {
     const rows = this.db.prepare("SELECT session_id FROM chat_sessions WHERE project_id = ?").all(projectId);
     return rows.map((r) => r.session_id);
   }
-  // ---------- 预设 Profile（P0 §2.6） ----------
-  /** 种子内置 4 个 Profile（幂等）；首个成为项目默认。返回是否首次种子。 */
+  // ---------- Preset profiles (P0 §2.6) ----------
+  /** Seed the 4 built-in profiles (idempotent); the first one becomes the project default. Returns whether this was the first seeding. */
   seedProfiles(projectId) {
     const existing = this.db.prepare("SELECT COUNT(*) AS n FROM profiles WHERE project_id = ?").get(projectId);
     if (existing.n > 0) return false;
@@ -516,7 +516,7 @@ class Storage {
     const row = this.db.prepare("SELECT * FROM profiles WHERE project_id = ? AND is_default = 1").get(projectId);
     return row ? rowToProfile(row) : void 0;
   }
-  /** 自定义 Profile（复制现有改三轴）；内置不可直接覆盖。 */
+  /** Custom profile (copy an existing one and change the three axes); built-ins cannot be overwritten directly. */
   upsertProfile(projectId, p) {
     const t = Date.now();
     this.db.prepare(
@@ -528,7 +528,7 @@ class Storage {
            WHERE profiles.is_builtin = 0`
     ).run(p.id, projectId, p.name, p.is_builtin ? 1 : 0, p.mode, p.setting, p.approval, p.sandbox, p.is_default ? 1 : 0, t, t);
   }
-  /** 设项目默认（清旧默认，设新默认）。 */
+  /** Set the project default (clear the old default, set the new one). */
   setDefaultProfile(projectId, id) {
     const p = this.getProfile(projectId, id);
     if (!p) return false;
@@ -690,10 +690,10 @@ function rowToApproval(r) {
   };
 }
 const BUILTIN_PROFILES = [
-  { id: "standard", name: "\u6807\u51C6", is_builtin: true, mode: "normal", setting: "balanced", approval: "ask", sandbox: "workspace-write" },
-  { id: "cautious", name: "\u8C28\u614E", is_builtin: true, mode: "plan", setting: "balanced", approval: "ask", sandbox: "read-only" },
-  { id: "surfing", name: "\u51B2\u6D6A", is_builtin: true, mode: "normal", setting: "light", approval: "auto", sandbox: "workspace-write" },
-  { id: "delivery", name: "\u4EA4\u4ED8", is_builtin: true, mode: "normal", setting: "delivery", approval: "auto", sandbox: "workspace-write" }
+  { id: "standard", name: "Standard", is_builtin: true, mode: "normal", setting: "balanced", approval: "ask", sandbox: "workspace-write" },
+  { id: "cautious", name: "Cautious", is_builtin: true, mode: "plan", setting: "balanced", approval: "ask", sandbox: "read-only" },
+  { id: "surfing", name: "Surfing", is_builtin: true, mode: "normal", setting: "light", approval: "auto", sandbox: "workspace-write" },
+  { id: "delivery", name: "Delivery", is_builtin: true, mode: "normal", setting: "delivery", approval: "auto", sandbox: "workspace-write" }
 ];
 function rowToProfile(r) {
   return {

@@ -1,7 +1,7 @@
-// [helmsman] 观察投影插件：session/event 实时事件流 → 看板投影（投影持有者）。
-// 持有 Projection（helmsman-projection 纯函数），监听引擎 session/event 折叠。
-// 提供内部服务：registerSession / getProjection（供 tasks/api 插件使用，经 ctx.provide）。
-// 替代 v1 的 tail.ts（轮询 JSONL）+ recovery.ts（启动重放）+ index.ts 的投影持有。
+// [helmsman] Observation/projection plugin: live session/event stream → board projection (the projection owner).
+// Owns the Projection (helmsman-projection pure functions) and folds engine session/events into it.
+// Provides internal services: registerSession / getProjection (used by the tasks/api plugins via ctx.provide).
+// Replaces v1's tail.ts (polling the JSONL) + recovery.ts (startup replay) + the projection ownership in index.ts.
 export const name = 'helmsman-board'
 export const inject = ['sessions', 'webServer']
 
@@ -20,16 +20,16 @@ export function apply(ctx) {
   const { webServer } = ctx
   const proj = newProjection()
 
-  // 实时折叠：session/event → foldSession（与 v1 tailer → foldTask 等价，但实时、无轮询）
+  // Live folding: session/event → foldSession (equivalent to v1 tailer → foldTask, but live and without polling)
   ctx.on('session/event', (session, event) => {
     if (!session?.id || !event) return
-    // 会话已注册（sessionProject 有映射）才 fold；未注册的会话（如 distill 内部会话）忽略
+    // Only fold registered sessions (those with a sessionProject mapping); unregistered sessions (e.g. distill's internal sessions) are ignored
     if (proj.sessionProject[session.id] !== undefined) {
       foldSession(proj, session.id, event)
     }
   })
 
-  // 提供给其他插件的内部服务（helmsman-api / helmsman-tasks 经 ctx.get('helmsmanBoard') 使用）
+  // Internal service for other plugins (helmsman-api / helmsman-tasks use it via ctx.get('helmsmanBoard'))
   ctx.provide('helmsmanBoard', {
     get projection() { return proj },
     ensureProject: (id, name, path) => ensureProject(proj, id, name, path),
@@ -41,19 +41,19 @@ export function apply(ctx) {
     sessions: () => proj.sessionProject,
   })
 
-  // ---------- /api/events：实时事件推送（WS + SSE）→ 前端投影 store ----------
-  // 前端期望 {type, seq, time, data}（session/event 原生形状）。WS 优先，SSE 兜底。
-  // WS 用官方同款 ws 库（WebSocketServer noServer + handleUpgrade），不手写帧。
+  // ---------- /api/events: live event push (WS + SSE) → frontend projection store ----------
+  // The frontend expects {type, seq, time, data} (the native session/event shape). WS preferred, SSE as fallback.
+  // WS uses the same ws library as the official build (WebSocketServer noServer + handleUpgrade); no hand-written frames.
   const wss = new WebSocketServer({ noServer: true })
-  const sseClients = new Set() // ServerResponse 集合（SSE 流）
+  const sseClients = new Set() // set of ServerResponse objects (SSE streams)
 
-  // 转发：session/event → 所有 WS/SSE 客户端（附加 session id 供前端路由）
+  // Forward: session/event → every WS/SSE client (session id attached so the frontend can route it)
   const forwardEvent = (session, event) => {
     const frame = { ...event, id: session?.id }
     const data = JSON.stringify(frame)
     for (const client of wss.clients) {
       if (client.readyState === 1) {
-        try { client.send(data) } catch { /* 忽略坏连接 */ }
+        try { client.send(data) } catch { /* ignore broken connections */ }
       }
     }
     for (const res of sseClients) {
@@ -61,7 +61,7 @@ export function apply(ctx) {
     }
   }
 
-  // WS 升级：/api/events（官方模式：mux.handleUpgrade）
+  // WS upgrade: /api/events (official pattern: mux.handleUpgrade)
   webServer.registerUpgrade({
     path: '/api/events',
     handler: (req, socket, head) => {
@@ -71,7 +71,7 @@ export function apply(ctx) {
     },
   })
 
-  // SSE 兜底：GET /api/events
+  // SSE fallback: GET /api/events
   webServer.register({
     kind: 'exact',
     path: '/api/events',
@@ -90,7 +90,7 @@ export function apply(ctx) {
     },
   })
 
-  // 观察统计路由（D3-3 遗留，保留作探活）
+  // Observation stats route (left over from D3-3, kept as a liveness probe)
   webServer.register({
     kind: 'exact',
     path: '/api/board/stats',
@@ -104,13 +104,13 @@ export function apply(ctx) {
     },
   })
 
-  // 在 session/event 监听里转发（与 fold 同源）
+  // Forward inside the session/event listener (same source as fold)
   ctx.on('session/event', (session, event) => {
     if (!session?.id || !event) return
     forwardEvent(session, event)
   })
 
-  console.log('[helmsman-board] 投影持有者就绪，session/event 实时折叠中')
+  console.log('[helmsman-board] projection owner ready, folding session/events live')
 }
 
 export default { name, inject, apply }
