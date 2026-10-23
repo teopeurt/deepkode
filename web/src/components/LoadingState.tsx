@@ -1,17 +1,17 @@
-// 职责：加载状态（Beautiful UI「Loading State」移植，MIT © Shane Levine）——
-//   pixel 网格 / dots 脉冲 / drive 扫条 / orbit 双环 / surfer 波浪 + shimmer 文字 + 计时。
+// Responsibility: loading state (port of Beautiful UI's "Loading State", MIT © Shane Levine) ——
+//   pixel grid / dots pulse / drive sweep bar / orbit double ring / surfer wave + shimmer text + timer.
 import { useEffect, useState } from 'react';
 
 export type LoadingVariant = 'pixel' | 'dots' | 'drive' | 'orbit' | 'surfer';
 
 interface Props {
   label?: string;
-  /** 计时起点（epoch ms）；不传则不显示计时 */
+  /** Timer start (epoch ms); no timer is shown if not passed */
   startedAt?: number;
   variant?: LoadingVariant;
 }
 
-export function LoadingState({ label = '处理中…', startedAt, variant = 'pixel' }: Props) {
+export function LoadingState({ label = 'Working…', startedAt, variant = 'pixel' }: Props) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {

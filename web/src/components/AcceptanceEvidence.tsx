@@ -1,5 +1,5 @@
-// 职责：便宜验收证据 —— git 改动快照 + 验收命令结果。批复队列与抽屉共用。
-// diff.stat（git diff --stat）解析为 DiffTable（Beautiful UI 移植）：文件 | 行数 | +增 | -删。
+// Responsibility: cheap acceptance evidence —— git change snapshot + acceptance command result. Shared by the approval queue and the drawer.
+// diff.stat (git diff --stat) is parsed into a DiffTable (ported from Beautiful UI): file | lines | +added | -removed.
 import { DiffTable, parseDiffStat } from './DiffTable'
 export function AcceptanceEvidence({ payload }: { payload: Record<string, unknown> }) {
   const criteria = typeof payload.criteria === 'string' && payload.criteria.trim() ? payload.criteria : null
@@ -24,7 +24,7 @@ export function AcceptanceEvidence({ payload }: { payload: Record<string, unknow
       {worktree ? (
         <div className="ev-section">
           <div className="ev-head">
-            <span>隔离工作区</span>
+            <span>Isolated workspace</span>
             <span className="tag">{worktree.branch}</span>
           </div>
           <div className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 'var(--fs-xs)' }}>{worktree.path}</div>
@@ -34,10 +34,10 @@ export function AcceptanceEvidence({ payload }: { payload: Record<string, unknow
       {verify || criteria ? (
         <div className="ev-section">
           <div className="ev-head">
-            <span>验收命令</span>
-            {verdict === 'pass' ? <span className="tag ev-pass">通过</span> : null}
-            {verdict === 'fail' ? <span className="tag ev-fail">未通过</span> : null}
-            {verdict === 'skip' ? <span className="tag">未判定</span> : null}
+            <span>Acceptance command</span>
+            {verdict === 'pass' ? <span className="tag ev-pass">passed</span> : null}
+            {verdict === 'fail' ? <span className="tag ev-fail">failed</span> : null}
+            {verdict === 'skip' ? <span className="tag">undecided</span> : null}
             {verify && verify.durationMs >= 0 ? <span className="muted">{verify.durationMs}ms</span> : null}
             {verify?.exitCode != null ? <span className="muted">exit {verify.exitCode}</span> : null}
           </div>
@@ -45,7 +45,7 @@ export function AcceptanceEvidence({ payload }: { payload: Record<string, unknow
           {verify?.error ? <div className="ev-err">{verify.error}</div> : null}
           {verify?.outputTail ? (
             <details className="appr-plan">
-              <summary>命令输出（末尾）</summary>
+              <summary>Command output (tail)</summary>
               <pre className="ev-pre">{verify.outputTail}</pre>
             </details>
           ) : null}
@@ -54,10 +54,10 @@ export function AcceptanceEvidence({ payload }: { payload: Record<string, unknow
       {diff ? (
         <div className="ev-section">
           <div className="ev-head">
-            <span>工作区改动</span>
-            {diff.error ? <span className="tag ev-fail">无法取 diff</span> : null}
-            {!diff.error && diff.dirty ? <span className="tag">{diff.files.length} 个文件</span> : null}
-            {!diff.error && !diff.dirty ? <span className="tag ev-pass">干净</span> : null}
+            <span>Workspace changes</span>
+            {diff.error ? <span className="tag ev-fail">diff unavailable</span> : null}
+            {!diff.error && diff.dirty ? <span className="tag">{diff.files.length} files</span> : null}
+            {!diff.error && !diff.dirty ? <span className="tag ev-pass">clean</span> : null}
           </div>
           {diff.error ? <div className="ev-err">{diff.error}</div> : null}
           {!diff.error && diff.stat ? renderDiffStat(diff.stat) : null}
@@ -72,7 +72,7 @@ export function AcceptanceEvidence({ payload }: { payload: Record<string, unknow
   )
 }
 
-/** diffstat → DiffTable（解析失败回退原始文本） */
+/** diffstat → DiffTable (falls back to the raw text if parsing fails) */
 function renderDiffStat(stat: string) {
   const parsed = parseDiffStat(stat)
   if (parsed.rows.length === 0) return <pre className="ev-pre">{stat}</pre>
@@ -80,10 +80,10 @@ function renderDiffStat(stat: string) {
     <div style={{ marginTop: 8 }}>
       <DiffTable
         columns={[
-          { key: 'file', label: '文件', width: '52%' },
-          { key: 'count', label: '行数', width: '16%' },
-          { key: 'add', label: '+ 增', width: '16%' },
-          { key: 'del', label: '- 删', width: '16%' },
+          { key: 'file', label: 'File', width: '52%' },
+          { key: 'count', label: 'Lines', width: '16%' },
+          { key: 'add', label: '+ Added', width: '16%' },
+          { key: 'del', label: '- Removed', width: '16%' },
         ]}
         rows={parsed.rows}
         footer={parsed.footer}

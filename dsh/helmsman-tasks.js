@@ -1,9 +1,9 @@
-// [helmsman] 任务编排插件（引擎内）：agents.create/followup 驱动面。
-// 提供内部服务 helmsmanTasks（供 helmsman-api 调用）：
+// [helmsman] Task orchestration plugin (in-engine): the agents.create/followup driving surface.
+// Provides the internal service helmsmanTasks (called by helmsman-api):
 //   createTask({cwd, brief, preset, project_id, card_id}) → {sid}
 //   sendComment(sid, text) → {ok}
 //   getTaskStatus(sid) → {sid, status, reply}
-// HTTP 路由统一在 helmsman-api（避免 /api/tasks 路由冲突）。
+// HTTP routes all live in helmsman-api (avoids /api/tasks route conflicts).
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -18,11 +18,11 @@ export function apply(ctx) {
   const worktree = ctx.get('helmsmanWorktree')
 
   ctx.provide('helmsmanTasks', {
-    /** 建任务：引擎内 agents.create + 首条指令（sendBrief=false 则不发送，等后续输入）。返回 {sid, isolated}。 */
+    /** Create a task: in-engine agents.create + first instruction (if sendBrief=false nothing is sent; wait for later input). Returns {sid, isolated}. */
     async createTask({ cwd, brief, preset, project_id, card_id, sendBrief = true, internalize = false }) {
       const sid = SessionId(`task-${randomUUID().slice(0, 12)}`)
       const pid = project_id ?? 'default'
-      // 任务级隔离：git 仓库 → worktree（agent 在隔离区跑，不写主工作区）；非 git/失败回退项目目录
+      // Task-level isolation: git repo → worktree (the agent runs in the isolation area and does not write the main workspace); non-git/failure falls back to the project directory
       let runCwd = cwd
       let worktreeInfo = null
       let isolated = false
@@ -32,10 +32,10 @@ export function apply(ctx) {
           runCwd = wt.path
           worktreeInfo = wt
         } else {
-          isolated = true // M5：隔离区不可用 → 可见标记（前端提示"共享目录运行"）
+          isolated = true // M5: isolation area unavailable → visible flag (frontend shows "running in shared directory")
         }
       }
-      // 先注册投影，再创建 agent：session/event 在 create 后立刻开始，注册必须先行
+      // Register the projection first, then create the agent: session/event starts right after create, so registration must come first
       if (board && (project_id || card_id)) {
         if (card_id) {
           const card = board.projection.projects?.[pid]?.cards?.[card_id]
@@ -45,11 +45,11 @@ export function apply(ctx) {
           }
         }
         board.registerSession(sid, pid, card_id ?? '')
-        // 简单会话：写入 chat_sessions 表（重启后恢复到项目 chats，不进看板）
+        // Simple chat: write to the chat_sessions table (restored into the project's chats after a restart, not on the board)
         if (storage && !card_id) {
           storage.registerChat(sid, pid)
         }
-        // 执行快照落盘（重启后 session→卡 映射恢复的权威来源）
+        // Persist the execution snapshot (authoritative source for restoring the session→card mapping after a restart)
         if (storage && card_id) {
           const created = Date.now()
           storage.upsertExecution({
@@ -57,7 +57,7 @@ export function apply(ctx) {
             forked_from: null, started_at: null, finished_at: null, created_at: created,
           })
         }
-        // 执行的工作区信息写入投影（前端展示隔离状态）
+        // Write the execution's workspace info into the projection (frontend shows the isolation state)
         const t = board.projection.projects?.[pid]?.cards?.[card_id]?.executions?.[sid]
         if (t) {
           t.worktree = worktreeInfo
@@ -68,7 +68,7 @@ export function apply(ctx) {
         sessionId: sid,
         meta: { cwd: runCwd },
         agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
-        // 任务级装配：preset 挂载（patch 3 的原生替代）+ model selection 接点
+        // Task-level assembly: preset mounting (native replacement for patch 3) + model-selection hook point
         setup: async (agentCtx) => {
           if (preset) {
             const presets = ctx.get('agentPresets')
@@ -77,14 +77,14 @@ export function apply(ctx) {
         },
       })
       if (sendBrief && brief) {
-        // 任务启动装配（D3-9）：项目知识库命中 + 稳定前缀 → 首条 prompt
+        // Task-start assembly (D3-9): project knowledge-base hits + stable prefix → first prompt
         let promptText = brief
         try {
           const kb = ctx.get('helmsmanKb')
           if (kb?.assembleTaskPrompt && (project_id || card_id)) {
-            // 装配（含命中清单），同时把 kbHits 记到投影（前端简报 tab 展示）
+            // Assemble (including the hit list) and record kbHits in the projection (shown in the frontend brief tab)
             const assembled = await kb.assembleTaskPromptFull({
-              taskTitle: brief, // v2 的 brief = 任务执行指令（v1 的 title+description 合体）
+              taskTitle: brief, // v2's brief = the task execution instruction (v1's title+description combined)
               taskDescription: '',
               projectId: pid,
               brief: true,
@@ -97,7 +97,7 @@ export function apply(ctx) {
             }
           }
         } catch (e) {
-          console.warn(`[helmsman-tasks] 装配失败（回落原始 brief）:`, e?.message ?? e)
+          console.warn(`[helmsman-tasks] assembly failed (falling back to the raw brief):`, e?.message ?? e)
         }
         agent.followup(createUserMessage({
           content: [{ type: 'text', text: promptText }],
@@ -108,7 +108,7 @@ export function apply(ctx) {
       return { sid, isolated, worktree: worktreeInfo }
     },
 
-    /** 取消：引擎内 agent.cancel（替代 v1 的 ACP session/cancel）。 */
+    /** Cancel: in-engine agent.cancel (replaces v1's ACP session/cancel). */
     cancelTask(sid) {
       const agent = agents.get(SessionId(sid))
       if (!agent) return false
@@ -116,9 +116,9 @@ export function apply(ctx) {
       return true
     },
 
-    /** 评论 = 控制通道：followup 驱动 agent。 */
+    /** Comments = control channel: followup drives the agent. */
     async sendComment(sid, text) {
-      // 历史会话（重启后未 resume）：先 resume 拿 live agent 再驱动
+      // Historical session (not resumed after a restart): resume first to get a live agent, then drive it
       let agent = agents.get(SessionId(sid))
       if (!agent) {
         try {
@@ -139,9 +139,9 @@ export function apply(ctx) {
       return { ok: true }
     },
 
-    /** 分叉会话：复制原会话历史为新会话（独立继续，不干扰原会话）。返回 {sid}。 */
+    /** Fork a session: copy the original session's history into a new session (continues independently without affecting the original). Returns {sid}. */
     async forkTask({ sid, project_id, card_id }) {
-      // 源会话需要 live agent：历史会话（重启后未 resume）先 resume
+      // The source session needs a live agent: historical sessions (not resumed after a restart) are resumed first
       let srcAgent = agents.get(SessionId(sid))
       if (!srcAgent) {
         try {
@@ -169,7 +169,7 @@ export function apply(ctx) {
         seed,
         agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
       })
-      // 把 seed 历史 fold 进投影（board 只实时 fold，seed 需手动补）
+      // Fold the seed history into the projection (the board only folds live events; the seed has to be added manually)
       if (board) {
         board.registerSession(newSid, pid, card_id ?? '')
         for (const ev of seed) board.fold(newSid, ev)
@@ -185,7 +185,7 @@ export function apply(ctx) {
       return { sid: newSid }
     },
 
-    /** 任务状态：agent live 则实时读 session log；否则查投影。 */
+    /** Task status: if the agent is live, read the session log in real time; otherwise query the projection. */
     getTaskStatus(sid) {
       const agent = agents.get(SessionId(sid))
       if (agent) {
@@ -195,7 +195,7 @@ export function apply(ctx) {
           reply: extractAssistantText(agent.session.events),
         }
       }
-      // 非 live（如引擎重启后）→ 查投影
+      // Not live (e.g. after an engine restart) → query the projection
       const pid = board?.projection?.sessionProject?.[sid]
       if (!pid) return { sid, status: 'unknown', reply: '' }
       const cardId = board.projection.sessionCard?.[sid]
@@ -205,10 +205,10 @@ export function apply(ctx) {
     },
   })
 
-  console.log('[helmsman-tasks] 编排服务已提供：helmsmanTasks')
+  console.log('[helmsman-tasks] orchestration service provided: helmsmanTasks')
 }
 
-/** 从 session log 抽最后一条 assistant 文本。 */
+/** Extract the last assistant text from the session log. */
 function extractAssistantText(events) {
   let text = ''
   for (const ev of events) {
@@ -222,7 +222,7 @@ function extractAssistantText(events) {
   return text.trim()
 }
 
-/** 从投影 TaskState 抽最后一条 Text 活动。 */
+/** Extract the last Text activity from a projection TaskState. */
 function extractTaskReply(t) {
   if (!t) return ''
   const texts = []

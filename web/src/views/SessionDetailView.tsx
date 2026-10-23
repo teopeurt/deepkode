@@ -1,8 +1,8 @@
-// 职责：会话钻入独立页（O7：`#/p/:pid/t/:sid` 全屏 DSH 式会话）——
-//   聊天视图（思考折叠 + 工具 + 流式 + Prompt Bar 控制通道）
-//   轨迹视图（复用 TrajectoryView 时间线）。
-// 数据：comments（user 消息）+ activities（agent 活动流）+ usage（成本）。
-// 思考/工具：按回合归组进 Thinking 块（Beautiful UI 移植）—— 推理+工具同回合合并展示。
+// Responsibility: standalone session drill-in page (O7: `#/p/:pid/t/:sid` full-screen DSH-style session) ——
+//   chat view (collapsible thinking + tools + streaming + Prompt Bar control channel)
+//   trajectory view (reuses the TrajectoryView timeline).
+// Data: comments (user messages) + activities (agent activity stream) + usage (cost).
+// Thinking/tools: grouped by turn into Thinking blocks (ported from Beautiful UI) —— reasoning + tools of the same turn are shown together.
 import { useEffect, useRef, useState } from 'react';
 import { useUi, writeHash } from '../store/ui';
 import { useProjection, effectiveStatus, waitingLabel, type TaskState } from '../store/projection';
@@ -18,13 +18,13 @@ import { SelectionActions, promptFromSelection } from '../components/SelectionAc
 
 type SessionTab = 'chat' | 'trajectory';
 
-/** 把活动流折叠成消息：user 评论；text = agent 正文；think = 一回合的 推理+工具 归组 */
+/** Fold the activity stream into messages: user comments; text = agent body; think = one turn's reasoning + tools grouped together */
 interface Msg {
   id: number;
   kind: 'user' | 'text' | 'think';
   text?: string;
   rows?: ThinkRow[];
-  /** 时间戳（epoch ms，排序交错用） */
+  /** Timestamp (epoch ms, used for interleaved sorting) */
   at?: number;
 }
 
@@ -36,36 +36,36 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
   const [tab, setTab] = useState<SessionTab>('chat');
   const [input, setInput] = useState('');
   const [kbHits, setKbHits] = useState<{ id: string; title: string; summary: string }[]>([]);
-  // 会话内切模型（按 sid 持久化；引擎 model 插件经共享文件读取，下一轮生效）
+  // In-session model switching (persisted per sid; the engine model plugin reads it via the shared file, effective next turn)
   const [selModel, setSelModel] = useState<string | null>(() => {
     try { return localStorage.getItem('helmsman-session-model:' + sid); } catch { return null; }
   });
   const pickModel = (m: string) => {
-    try { localStorage.setItem('helmsman-session-model:' + sid, m); } catch { /* 忽略 */ }
+    try { localStorage.setItem('helmsman-session-model:' + sid, m); } catch { /* ignore */ }
     setSelModel(m);
     void fetch(`/api/sessions/${encodeURIComponent(sid)}/model`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: m }),
     }).catch(() => {});
-    toast(`已切换模型 ${m}（下一轮生效）`);
+    toast(`Switched model to ${m} (takes effect next turn)`);
   };
   const scrollRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<PromptBarHandle>(null);
 
-  // 反查归属：卡执行 → card.executions；简单会话 → chats（A 组）
+  // Reverse lookup of ownership: card execution → card.executions; simple chat → chats (group A)
   const cardEntry = Object.entries(cards[pid] ?? {}).find(([, c]) => c.executions[sid]);
   const card = cardEntry?.[1];
   const chats = useProjection((s) => s.chats[pid] || {});
   const task: TaskState | undefined = card?.executions[sid] ?? chats[sid];
   const stream = streams[sid];
 
-  // 返回进入前的视图（openSession 把 view 保留在 URL；不能写死 kanban）
+  // Return to the view we came from (openSession keeps view in the URL; must not hard-code kanban)
   const back = () => {
     const from = useUi.getState().view;
     writeHash(pid, from === 'home' ? 'kanban' : from, card?.id ?? null, 'comments');
   };
 
-  // 底部锚定（聊天视图）
+  // Anchor to the bottom (chat view)
   useEffect(() => {
     if (tab === 'chat' && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -75,14 +75,14 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
   const send = async (raw?: string) => {
     const v = (raw ?? input).trim();
     if (!v) return;
-    if (conn !== 'online') { toast('断连期间禁用控制操作'); return; }
+    if (conn !== 'online') { toast('Control actions are disabled while disconnected'); return; }
     setInput('');
     const ok = await useProjection.getState().postComment(sid, v);
     if (ok) {
-      toast('已发送 · 引擎执行中');
+      toast('Sent · engine running');
       if (card) useProjection.getState().loadCard(card.id);
     } else {
-      toast('发送失败');
+      toast('Send failed');
       setInput(v);
     }
   };
@@ -96,14 +96,14 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
     } catch { setKbHits([]); }
   };
 
-  // 折叠消息序列：先 user comments，再 agent 活动流（推理/工具按回合归组，正文隔断归组）
+  // Fold the message sequence: user comments first, then the agent activity stream (reasoning/tools grouped by turn, broken up by body text)
   const messages: Msg[] = (() => {
     const msgs: Msg[] = [];
     let n = 0;
     ((task?.comments) ?? []).forEach((c) => {
       if (c.who === 'user') msgs.push({ id: n++, kind: 'user', text: c.text, at: c.at ?? 0 });
     });
-    // 工具调用参数索引
+    // Tool-call argument index
     const toolById: Record<string, { args?: string; is_error?: boolean }> = {};
     (task?.tool_calls ?? []).forEach((tc) => { toolById[tc.call_id] = { args: tc.args, is_error: tc.is_error }; });
 
@@ -132,7 +132,7 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
           err: toolById[a.ToolStart.name]?.is_error ?? false,
           at: a.ToolStart.at ?? 0,
         };
-        // 合并紧随其后的 ToolResult（耗时/成败）
+        // Merge the immediately following ToolResult (duration / success)
         let j = i + 1;
         const next = j < acts.length ? acts[j] : null;
         if (next && 'ToolResult' in next) {
@@ -154,34 +154,34 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
       }
     }
     flush();
-    // 按时间交错（稳定排序：同 turn 的推理/工具/正文相对顺序保持，user 评论落位）
+    // Interleave by time (stable sort: the relative order of reasoning/tools/body within a turn is kept, user comments fall into place)
     return msgs.sort((x, y) => (x.at ?? 0) - (y.at ?? 0));
   })();
 
   const st = task ? effectiveStatus(task) : 'Pending';
   const running = task?.status === 'Running';
   const copyOut = (t: string) => {
-    void navigator.clipboard.writeText(t).then(() => toast('已复制')).catch(() => toast('复制失败'));
+    void navigator.clipboard.writeText(t).then(() => toast('Copied')).catch(() => toast('Copy failed'));
   };
 
-  // 批复决策：走正式批复 API（队列放行 + 决策记录 + 策略沉淀），不是发评论。
-  // 与 TaskDetailDrawer.decideWaiting 同语义（Waiting 放行 = 走队列）。
+  // Approval decision: goes through the formal approval API (queue release + decision record + policy capture), not a comment.
+  // Same semantics as TaskDetailDrawer.decideWaiting (releasing a Waiting = going through the queue).
   const decideWaiting = async (outcome: 'approved' | 'rejected') => {
-    if (conn !== 'online') { toast('断连期间禁用控制操作'); return; }
+    if (conn !== 'online') { toast('Control actions are disabled while disconnected'); return; }
     try {
       const approvals = await listApprovals(pid);
       const appr = approvals.find((a) => a.execution_id === sid && a.outcome === null);
-      if (!appr) { toast('未找到待批复项（可能已决策）'); return; }
-      const ok = await decideApproval(appr.id, outcome, outcome === 'approved' ? '批准继续' : '需要修改');
-      toast(ok ? `已${outcome === 'approved' ? '批准' : '拒绝'} · 决策已送达 agent` : '决策失败');
+      if (!appr) { toast('No pending approval found (it may already have been decided)'); return; }
+      const ok = await decideApproval(appr.id, outcome, outcome === 'approved' ? 'Approved, continue' : 'Needs changes');
+      toast(ok ? `${outcome === 'approved' ? 'Approved' : 'Rejected'} · decision delivered to the agent` : 'Decision failed');
       if (ok && card) useProjection.getState().loadCard(card.id);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e));
     }
   };
   const waitingFollow = task?.waiting ? [
-    { id: 'approve', label: '批准继续', onClick: () => { void decideWaiting('approved'); } },
-    { id: 'revise', label: '需要修改', onClick: () => { void decideWaiting('rejected'); } },
+    { id: 'approve', label: 'Approve and continue', onClick: () => { void decideWaiting('approved'); } },
+    { id: 'revise', label: 'Needs changes', onClick: () => { void decideWaiting('rejected'); } },
   ] : undefined;
   const toolSources = messages
     .flatMap((x) => (x.kind === 'think' ? (x.rows ?? []) : []))
@@ -192,26 +192,26 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
       return acc;
     }, []);
   const commands: SlashCommand[] = [
-    { id: 'approve', label: '批准继续', hint: '正式批复', run: () => { void decideWaiting('approved'); } },
-    { id: 'revise', label: '需要修改', hint: '正式批复', run: () => { void decideWaiting('rejected'); } },
+    { id: 'approve', label: 'Approve and continue', hint: 'formal decision', run: () => { void decideWaiting('approved'); } },
+    { id: 'revise', label: 'Needs changes', hint: 'formal decision', run: () => { void decideWaiting('rejected'); } },
   ];
 
   return (
     <div id="sessiondetail">
       <header className="sd-head">
-        <Button variant="quiet" mini onClick={back} title="返回看板">← 返回</Button>
+        <Button variant="quiet" mini onClick={back} title="Back to the board">← Back</Button>
         <div className="sd-title">
-          <strong>{card?.title ?? '会话'}</strong>
+          <strong>{card?.title ?? 'Session'}</strong>
           <span className="sd-meta">
             {st === 'Running' ? <span className="dot ok" /> : null}
-            {st} · {task?.model ?? '-'} · 回合 {task?.turns ?? 0}
-            {task?.waiting ? ` · ⏸ 待批复:${waitingLabel(task.waiting.kind)}` : ''}
+            {st} · {task?.model ?? '-'} · turn {task?.turns ?? 0}
+            {task?.waiting ? ` · ⏸ awaiting approval: ${waitingLabel(task.waiting.kind)}` : ''}
           </span>
         </div>
         <div className="sd-tabs">
           {(['chat', 'trajectory'] as SessionTab[]).map((t) => (
             <button key={t} className={'sd-tab' + (tab === t ? ' active' : '')} onClick={() => setTab(t)}>
-              {t === 'chat' ? '会话' : '轨迹'}
+              {t === 'chat' ? 'Chat' : 'Trajectory'}
             </button>
           ))}
         </div>
@@ -227,7 +227,7 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
           >
             {messages.length === 0 && !stream && (
               <div className="ph-empty">
-                {running ? <LoadingState variant="orbit" label="引擎思考中…" startedAt={task?.started_at} /> : '暂无消息（引擎执行中或未开始）'}
+                {running ? <LoadingState variant="orbit" label="Engine thinking…" startedAt={task?.started_at} /> : 'No messages yet (the engine is running or has not started)'}
               </div>
             )}
             {messages.map((m, i) => {
@@ -248,7 +248,7 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
               const last = i === messages.length - 1;
               return (
                 <div key={m.id} className="sess-row">
-                  <div className={'sess-bub md-bub' + ((m.text || '').indexOf('失败') === 0 ? ' err' : '')}>
+                  <div className={'sess-bub md-bub' + ((m.text || '').indexOf('Failed') === 0 ? ' err' : '')}>
                     <Markdown text={m.text ?? ''} />
                     {last && !stream ? (
                       <StreamingText
@@ -276,7 +276,7 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
         </div>
       ) : (
         <div className="sd-traj">
-          {task ? <TrajectoryView task={task} stream={stream} /> : <div className="ph-empty">任务未加载</div>}
+          {task ? <TrajectoryView task={task} stream={stream} /> : <div className="ph-empty">Task not loaded</div>}
         </div>
       )}
 
@@ -286,7 +286,7 @@ export function SessionDetailView({ pid, sid }: { pid: string; sid: string }) {
           value={input}
           onChange={setInput}
           onSend={() => void send()}
-          placeholder="评论 = 控制通道（指示 / 引导 / 批复）· @ 提及  / 命令"
+          placeholder="Comments = control channel (instructions / guidance / decisions) · @ mention  / commands"
           disabled={conn !== 'online'}
           mentions={kbHits.map((h) => ({ id: h.id, title: h.title, sub: h.summary?.slice(0, 60) }))}
           onMentionQuery={(q) => void searchKb(q)}

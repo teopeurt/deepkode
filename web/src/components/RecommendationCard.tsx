@@ -1,17 +1,17 @@
-// 职责：推荐卡（Beautiful UI「Recommendation Card」移植，MIT © Shane Levine）——
-//   agent 建议 + 三档置信度计量条（高置信=3 绿 / 需复核=2 黄 / 无信号=0 灰）+ 可选其他选项 + Accept/Alternatives。
-//   compact 变体：单行建议（meter + 文案 + 采用/不采用），用于嵌进批复卡内。
+// Responsibility: recommendation card (port of Beautiful UI's "Recommendation Card", MIT © Shane Levine) ——
+//   agent suggestion + three-level confidence meter (high confidence = 3 green / needs review = 2 yellow / no signal = 0 gray) + optional alternatives + Accept/Alternatives.
+//   compact variant: a one-line suggestion (meter + text + adopt/don't adopt), for embedding inside approval cards.
 import { useState, type ReactNode } from 'react';
 
 export type Confidence = 'high' | 'needs-review' | 'no-signal';
 
 export const CONF_LABEL: Record<Confidence, string> = {
-  high: '高置信',
-  'needs-review': '需复核',
-  'no-signal': '无信号',
+  high: 'High confidence',
+  'needs-review': 'Needs review',
+  'no-signal': 'No signal',
 };
 
-/** 计量条亮起的根数（high=3 / needs-review=2 / no-signal=0） */
+/** Number of lit meter bars (high=3 / needs-review=2 / no-signal=0) */
 const CONF_METER: Record<Confidence, number> = { high: 3, 'needs-review': 2, 'no-signal': 0 };
 
 export interface RecOption {
@@ -24,9 +24,9 @@ interface Props {
   title: string;
   description?: ReactNode;
   confidence?: Confidence;
-  /** 其他选项（可展开） */
+  /** Alternative options (expandable) */
   options?: RecOption[];
-  /** 紧凑单行变体（无选项展开、无独立 footer） */
+  /** Compact one-line variant (no expandable options, no separate footer) */
   compact?: boolean;
   acceptLabel?: string;
   alternativeLabel?: string;
@@ -49,8 +49,8 @@ export function RecommendationCard({
   confidence = 'high',
   options,
   compact = false,
-  acceptLabel = '接受',
-  alternativeLabel = '其他选项',
+  acceptLabel = 'Accept',
+  alternativeLabel = 'Alternatives',
   onAccept,
   onAlternative,
 }: Props) {
@@ -80,7 +80,7 @@ export function RecommendationCard({
       </div>
       {options && options.length > 0 && showOptions ? (
         <div className="rec-options">
-          <div className="rec-opt-head">其他选项</div>
+          <div className="rec-opt-head">Alternatives</div>
           {options.map((o) => (
             <button key={o.id} type="button" className="rec-opt">
               <Meter confidence={o.confidence ?? 'no-signal'} />

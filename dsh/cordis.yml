@@ -1,8 +1,8 @@
-# helmsman — dsh 引擎组合（粒度 spine + ACP 控制通道）
-# 观察通道：JSONL 会话日志（.sessions/）tail —— model-visible ⟺ logged 是权威事件源。
-# 无 session-query：架构决策（见 architecture-v1.md §2.1），不引入演示 bundle 的派生索引。
+# helmsman — dsh engine composition (granular spine + ACP control channel)
+# Observation channel: tailing the JSONL session logs (.sessions/) —— model-visible ⟺ logged is the authoritative event source.
+# No session-query: an architectural decision (see architecture-v1.md §2.1); the demo bundle's derived index is not used.
 
-# 会话标题：规则 fallback + LLM 生成（首条消息后自动生成标题，可后续修改）
+# Session titles: rule-based fallback + LLM generation (a title is generated automatically after the first message and can be edited later)
 - id: session-title
   name: '@deepseek-ai/dsh-session-title'
   config:
@@ -19,11 +19,11 @@
     maxOutputTokens: 64
     timeoutMs: 60000
 
-# 用户设置（$DSH_HOME/settings.yaml，热重载）
+# User settings ($DSH_HOME/settings.yaml, hot-reloaded)
 - id: settings
   name: '@deepseek-ai/dsh-settings-file'
 
-# 凭据存储：进程环境 over $DSH_HOME/.credentials.yaml；DEEPSEEK_API_KEY 在此解析，不内联。
+# Credential store: process environment over $DSH_HOME/.credentials.yaml; DEEPSEEK_API_KEY is resolved here, never inlined.
 - id: credentials
   name: '@deepseek-ai/dsh-credentials-local'
 
@@ -46,7 +46,7 @@
   config:
     timeoutMs: 60000
 
-# Spine bundle：不预建 agent（ACP 每个 session/new 建一个）；persona 即 helmsman 身份。
+# Spine bundle: no pre-built agents (ACP creates one per session/new); the persona is the helmsman identity.
 - id: agent-spine
   name: '@deepseek-ai/dsh-agent-spine-demo'
   config:
@@ -58,7 +58,7 @@
 
       You execute one task per session; the task brief arrives as the first user message and is authoritative. Verify your work by running code or tests. Keep answers brief and factual. When a task depends on project knowledge you lack, say so instead of guessing.
 
-# JSONL 会话日志：观察通道的数据源（Rust 侧 tail）。
+# JSONL session logs: the data source of the observation channel (tailed on the Rust side).
 - id: persistence
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
   config:
@@ -79,7 +79,7 @@
     maxTokens: 8192
     compactionRetries: 1
 
-# CWL 结构化上下文驱逐（独立插件 dsh-cwl，范式 arXiv:2606.11213）：pre-step 预算检查 + episode 驱逐
+# CWL structured context eviction (standalone plugin dsh-cwl, paradigm from arXiv:2606.11213): pre-step budget check + episode eviction
 - id: dsh-cwl
   name: dsh-cwl
 
@@ -137,9 +137,9 @@
   config:
     allowParallelInProgress: true
 
-# 每项目沙箱：workspace-write —— 每个任务（会话）的写根 = 会话 cwd（用户选择的项目目录），
-# 只能写自己的项目目录 + /tmp，不能越界写其他项目或系统任意位置（spec：任务以项目为隔离单位）。
-# 公开版（0.1.0-rc.7）：fs-sandbox 直接替代 fs-local（不再并存），配套 ctx.sandboxPolicy。
+# Per-project sandbox: workspace-write —— each task's (session's) write root = the session cwd (the project directory the user picked);
+# it can only write its own project directory + /tmp, never other projects or arbitrary system locations (spec: tasks are isolated per project).
+# Public release (0.1.0-rc.7): fs-sandbox replaces fs-local outright (they no longer coexist), paired with ctx.sandboxPolicy.
 - id: sandbox-policy
   name: '@deepseek-ai/dsh-sandbox-policy'
   config:
@@ -154,71 +154,71 @@
   name: '@deepseek-ai/dsh-tool-fs'
 
 
-# 命令级白名单（P1）：工具审批缝 —— guard 预设命中危险命令返回 ask 时，
-# 经 approval/request waterfall 路由到 dsh-acp 桥 → ACP requestPermission → Helmsman 批复队列。
-# 缺 answerer 时 fail-closed（拒绝命令，不静默放行）。
+# Command-level allowlist (P1): the tool-approval seam —— when the guard preset matches a dangerous command and returns ask,
+# it is routed via the approval/request waterfall to the dsh-acp bridge → ACP requestPermission → the Helmsman approval queue.
+# Without an answerer it fails closed (the command is rejected, never silently allowed).
 - id: approval
   name: '@deepseek-ai/dsh-user-approval'
   config:
     policy: ask
 
 
-# 预设 roster（P0 预设落地）：每任务可按 _meta.agentPreset 挂不同工具/人格。
-# 根目录 = 本仓库预设（system）+ ~/.dsh/.agent-presets（user，自动附加）。
+# Preset roster (P0 presets): each task can mount different tools/personas via _meta.agentPreset.
+# Roots = this repo's presets (system) + ~/.dsh/.agent-presets (user, appended automatically).
 - id: agent-presets
   name: '@deepseek-ai/dsh-agent-presets'
   config:
-    # default: 引擎 preset 仅作可选工具集定制（Profile 主路径由产品服务解析三轴，不传 presetId 时不 mount）；
-    # schema 要求 default 必填，占位为 code-concise（无害：产品服务不传即不生效）。
+    # default: engine presets are only an optional tool-set customization (the main Profile path has the product service resolve the three axes; nothing is mounted when no presetId is passed);
+    # the schema requires default, so code-concise is a placeholder (harmless: it has no effect unless the product service passes it).
     default: code-concise
     roots:
       - path: !!js "process.cwd() + '/agent-presets'"
         trust: system
 
-# [helmsman] 会话内切模型（引擎生态内插件）：agent/inbox/claimed 时读共享文件
-# 选中模型 → installModelSelection 挂 agent 请求路由（下一轮生效）。
+# [helmsman] In-session model switching (engine-ecosystem plugin): on agent/inbox/claimed, read the shared file's
+# the selected model → installModelSelection attaches it to the agent's request routing (takes effect next turn).
 - id: model-select
   name: ./model-select.js
 
-# ── 插件化迁移：引擎进程内 HTTP 网关 + Helmsman 业务插件（零 ACP 补丁）──
-# v1 的 server-ts（独立进程 + ACP 客户端）已迁入引擎进程并退役删除，
-# 历史保留于 archive/v1-acp-client 分支 + v1-acp-client tag。
+# ── Plugin migration: in-engine HTTP gateway + Helmsman business plugins (zero ACP patches) ──
+# v1's server-ts (separate process + ACP client) has been moved into the engine process and retired/deleted;
+# its history is kept on the archive/v1-acp-client branch + the v1-acp-client tag.
 
-# HTTP 网关：引擎进程内 HTTP/WS 服务（所有 /api 路由的挂载点）。
+# HTTP gateway: in-engine HTTP/WS server (the mount point for all /api routes).
 - id: webserver
   name: '@deepseek-ai/dsh-host-webserver'
   config:
     host: 127.0.0.1
     port: 3081
 
-# 任务编排：建任务（agents.create）/评论驱动（followup）/状态（session log 投影）。
+# Task orchestration: create tasks (agents.create) / drive via comments (followup) / status (session-log projection).
 - id: helmsman-tasks
   name: ./helmsman-tasks.js
 
-# 验收门：任务 Done → 跑验收命令 + 拍 git 证据 → 挂起 acceptance 审批（delivery）或直接 merge。
+# Acceptance gate: task Done → run the acceptance command + capture git evidence → suspend for an acceptance approval (delivery) or merge directly.
 - id: helmsman-acceptance
   name: ./helmsman-acceptance.js
 
-# 审批通道：approval/request waterfall answerer（guard 拦截 → 队列 → HTTP 批复）。
+# Approval channel: approval/request waterfall answerer (guard intercepts → queue → HTTP decision).
 - id: helmsman-approval
   name: ./helmsman-approval.js
 
-# 知识库：沉淀/检索/提炼（distill 引擎内 agents 直接驱动）。
+# Knowledge base: capture / retrieval / distillation (distill is driven directly by in-engine agents).
 - id: helmsman-kb
   name: ./helmsman-kb.js
 
-# 任务级 worktree 隔离：prepare/merge/discard。
+# Task-level worktree isolation: prepare/merge/discard.
 - id: helmsman-worktree
   name: ./helmsman-worktree.js
 
-# 观察投影（投影持有者）：session/event 实时折叠 → 看板状态。
+# Observation projection (the projection owner): live session/event folding → board state.
 - id: helmsman-board
   name: ./helmsman-board.js
 
-# 持久化：SQLite 元数据（项目/卡/设置/KB/Profile/策略）+ 启动投影重建（JSONL 重放）。
+# Persistence: SQLite metadata (projects/cards/settings/KB/profiles/policies) + projection rebuild at startup (JSONL replay).
 - id: helmsman-persist
   name: ./helmsman-persist.js
 
-# 业务 API：projects/cards/chats 路由（读投影，兼容前端契约）。
+# Business API: projects/cards/chats routes (reads the projection, compatible with the frontend contract).
 - id: helmsman-api
   name: ./helmsman-api.js

@@ -1,4 +1,4 @@
-// 职责：EmptyState —— 图标 + 标题 + 引导文案 + 可选动作。
+// Responsibility: EmptyState —— icon + title + guidance text + optional action.
 import type { ReactNode } from 'react';
 import type { IconName } from './icons';
 import { Icon } from './icons';

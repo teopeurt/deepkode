@@ -1,7 +1,7 @@
 {
-  "name": "Helmsman · 任务工作台",
+  "name": "Helmsman · Task Workspace",
   "short_name": "Helmsman",
-  "description": "给个人开发者的任务式 agent 工作台 —— 你掌舵，agent 划船",
+  "description": "A task-based agent workspace for solo developers —— you take the helm, the agent rows",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0B1220",

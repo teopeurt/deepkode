@@ -1,13 +1,13 @@
-// [helmsman] D3-1 网关先行：引擎进程内挂 HTTP 服务（复用官方 dsh-host-webserver）。
-// 验证前提：引擎进程能当服务器 —— 后续 helmsman-api 的全部 /api 路由都挂在这。
-// 本插件只验证传输层（register 路由 + 响应），不含任何业务逻辑。
+// [helmsman] D3-1 gateway first: mount an HTTP server inside the engine process (reusing the official dsh-host-webserver).
+// Validates the premise that the engine process can act as a server —— all of helmsman-api's /api routes are mounted here later.
+// This plugin only validates the transport layer (route registration + responses); it contains no business logic.
 export const name = 'helmsman-gateway'
 export const inject = ['webServer']
 
 export function apply(ctx) {
   const { webServer } = ctx
 
-  // GET /api/health —— 探活
+  // GET /api/health —— liveness probe
   webServer.register({
     kind: 'exact',
     path: '/api/health',
@@ -22,7 +22,7 @@ export function apply(ctx) {
     },
   })
 
-  // GET /api/ping —— 第二个验证路由（证明多路由注册）
+  // GET /api/ping —— second validation route (proves multiple routes can be registered)
   webServer.register({
     kind: 'exact',
     path: '/api/ping',
@@ -32,7 +32,7 @@ export function apply(ctx) {
     },
   })
 
-  console.log(`[helmsman-gateway] HTTP 路由已注册：/api/health /api/ping (port=${webServer.port})`)
+  console.log(`[helmsman-gateway] HTTP routes registered: /api/health /api/ping (port=${webServer.port})`)
 }
 
 export default { name, inject, apply }

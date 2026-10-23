@@ -1,72 +1,72 @@
-# 保序去重 CLI（dedupe）设计说明
+# Order-preserving dedupe CLI (dedupe) design notes
 
-> 用 Node 零依赖实现保序去重 CLI 的设计说明。
-> 基线：项目知识库「Yolo验证-去重CLI」已有零依赖原型 `dedupe.mjs`（~30 行）并经 5 用例验证通过，
-> 本设计在其基础上规范化（补充 stdin、`--help`、错误分类、CLI 契约与验收用例），核心算法保持一致。
+> Design notes for an order-preserving dedupe CLI implemented in Node with zero dependencies.
+> Baseline: the project knowledge-base entry "Yolo validation - dedupe CLI" already has a zero-dependency prototype `dedupe.mjs` (~30 lines) that passed 5 test cases;
+> this design standardizes it (adding stdin, `--help`, error classification, a CLI contract and acceptance cases) while keeping the core algorithm the same.
 
-## 1. 背景与目标
+## 1. Background and goals
 
-- **背景**：需要一个把文件/管道中的重复行去掉、同时保持各行首次出现顺序的小工具（日志去重、配置合并、清单清洗等场景）。
-- **目标**：用 Node 实现、**零第三方依赖**（仅 Node 内置模块）的保序去重 CLI。
-- **保序语义**：重复行只保留**首次出现**的那一次，输出顺序 = 各行首次出现的顺序（非字典序、非末次出现）。
-- **交付形态**：单文件 ESM 脚本 `dedupe.mjs`，`node dedupe.mjs` 直接运行，无安装、无构建。
+- **Background**: we need a small tool that removes duplicate lines from a file/pipe while keeping each line's first-occurrence order (log dedupe, config merging, list cleanup, etc.).
+- **Goal**: an order-preserving dedupe CLI implemented in Node with **zero third-party dependencies** (Node built-in modules only).
+- **Order-preserving semantics**: a duplicated line is kept only at its **first occurrence**; output order = the order in which lines first appear (not lexicographic, not last occurrence).
+- **Deliverable**: a single-file ESM script `dedupe.mjs`, run directly with `node dedupe.mjs`; no install, no build.
 
-## 2. 需求
+## 2. Requirements
 
-### 2.1 功能需求
+### 2.1 Functional requirements
 
-| 编号 | 需求 | 说明 |
+| ID | Requirement | Notes |
 |---|---|---|
-| F1 | 文件去重 | `node dedupe.mjs <文件>` 按行读取，保序去重后输出到 stdout |
-| F2 | 管道输入 | `cat in.txt \| node dedupe.mjs`（参数为 `-` 或省略）从 stdin 读取 |
-| F3 | CRLF 兼容 | `\r\n` 与 `\n` 都按行切分，`\r` 不作为行内容，输出统一 LF |
-| F4 | 空行参与去重 | 空行也是「行」：重复空行只保留首个 |
-| F5 | 空输入 | 空文件 / 空 stdin → 无输出，退出码 0 |
-| F6 | 文件错误 | 文件不存在 / 不可读 → stderr 报错，退出码 1 |
-| F7 | 用法提示 | `--help` / `-h` 打印用法并退出 0；参数非法打印用法并退出 1 |
-| F8 | 内容即身份 | 行按内容**原样**比较：区分大小写、保留行首尾空格、保留 Unicode/UTF-8 原样 |
+| F1 | File dedupe | `node dedupe.mjs <file>` reads line by line, dedupes preserving order, writes to stdout |
+| F2 | Pipe input | `cat in.txt \| node dedupe.mjs` (argument `-` or omitted) reads from stdin |
+| F3 | CRLF compatible | both `\r\n` and `\n` split lines, `\r` is not part of the line content, output is always LF |
+| F4 | Empty lines are deduped | an empty line is still a "line": repeated empty lines keep only the first |
+| F5 | Empty input | empty file / empty stdin → no output, exit code 0 |
+| F6 | File errors | file missing / unreadable → error on stderr, exit code 1 |
+| F7 | Usage | `--help` / `-h` prints usage and exits 0; invalid arguments print usage and exit 1 |
+| F8 | Content is identity | lines are compared **verbatim**: case-sensitive, leading/trailing spaces kept, Unicode/UTF-8 kept as-is |
 
-### 2.2 非功能需求
+### 2.2 Non-functional requirements
 
-- **零依赖**：只用 `node:fs`、`node:process` 等内置模块，无 package.json 依赖、无 lockfile。
-- **确定性**：相同输入必得相同输出（Set 判重与遍历顺序均确定）。
-- **简单优先**：全量读入内存（`readFileSync`）换取实现简单；大文件流式方案见 §4.4 留作扩展，不进 v1。
+- **Zero dependencies**: only built-in modules such as `node:fs` and `node:process`; no package.json dependencies, no lockfile.
+- **Deterministic**: the same input always gives the same output (Set membership and iteration order are both deterministic).
+- **Simplicity first**: read everything into memory (`readFileSync`) in exchange for a simple implementation; a streaming approach for large files is left as an extension in §4.4 and is not in v1.
 
-## 3. 总体设计
+## 3. Overall design
 
 ```
                         ┌─────────────────────────────┐
-   argv[2] ──┬─ <文件> ─▶│  readInput(arg)             │
-             │           │   - 文件: fs.readFileSync   │
-   stdin ────┴─ - / 缺省▶│   - stdin: fs.readFileSync(0)│
+   argv[2] ──┬─ <file> ─▶│  readInput(arg)             │
+             │           │   - file: fs.readFileSync   │
+   stdin ────┴─ - / none▶│   - stdin: fs.readFileSync(0)│
                         └──────────────┬──────────────┘
                                        ▼
                         ┌─────────────────────────────┐
-                        │  dedupeLines(text)          │  ← 纯函数
-                        │   归一 CRLF → split → Set   │
-                        │   判重 → 保序行数组           │
+                        │  dedupeLines(text)          │  ← pure function
+                        │   normalize CRLF → split →  │
+                        │   Set dedupe → ordered lines │
                         └──────────────┬──────────────┘
                                        ▼
                         ┌─────────────────────────────┐
                         │  stdout: join('\n') + '\n'   │
-                        │  stderr: 错误信息 + exit 1    │
+                        │  stderr: error message + exit 1 │
                         └─────────────────────────────┘
 ```
 
-- 单文件 `dedupe.mjs`，三部分职责：**参数解析与错误处理**（`main`）、**输入读取**（`readInput`）、**纯去重逻辑**（`dedupeLines`）。
-- 去重核心与已验证原型一致：`Set` 记录已见行，遍历时未见则入 `Set` 并追加到结果数组 → 天然保序。
+- A single file `dedupe.mjs` with three responsibilities: **argument parsing and error handling** (`main`), **input reading** (`readInput`), **pure dedupe logic** (`dedupeLines`).
+- The dedupe core matches the validated prototype: a `Set` records lines already seen; while iterating, an unseen line is added to the `Set` and appended to the result array → order is preserved naturally.
 
-## 4. 详细设计
+## 4. Detailed design
 
-### 4.1 函数划分
+### 4.1 Function breakdown
 
 ```
-main(argv)            // 入口：解析参数、调用 readInput/dedupeLines、写 stdout、设退出码
-readInput(arg)        // arg === '-' 或 undefined → stdin；否则读文件（ENOENT/EACCES 上抛）
-dedupeLines(text)     // 纯函数：(string) => string[]，保序去重后的行数组
+main(argv)            // entry: parse arguments, call readInput/dedupeLines, write stdout, set the exit code
+readInput(arg)        // arg === '-' or undefined → stdin; otherwise read the file (ENOENT/EACCES are rethrown)
+dedupeLines(text)     // pure function: (string) => string[], the deduped lines in order
 ```
 
-### 4.2 核心算法（dedupeLines）
+### 4.2 Core algorithm (dedupeLines)
 
 ```js
 function dedupeLines(text) {
@@ -80,74 +80,74 @@ function dedupeLines(text) {
 }
 ```
 
-- **CRLF 归一在前**：先 `replaceAll('\r\n', '\n')` 再 `split('\n')`，避免行尾残留 `\r`，且兼容「文件最后一行无换行符」（split 仍产出该行）。
-- **判重粒度 = 整行原文**：空串、含空格行、中文字符均按原样参与比较。
-- **保序**：输出数组顺序即遍历顺序 = 各行首次出现顺序。
+- **Normalize CRLF first**: `replaceAll('\r\n', '\n')` before `split('\n')`, so no `\r` is left at line ends, and "the last line has no trailing newline" still works (split still yields that line).
+- **Dedupe granularity = the whole raw line**: empty strings, lines with spaces and Chinese characters are all compared as-is.
+- **Order preserved**: the output array order is the iteration order = the order in which lines first appear.
 
-### 4.3 CLI 契约
+### 4.3 CLI contract
 
 ```
-用法:
-  node dedupe.mjs <文件>         # 文件保序去重
-  cat in.txt | node dedupe.mjs  # stdin 保序去重（参数省略或为 -）
-  node dedupe.mjs --help        # 打印用法，退出 0
+Usage:
+  node dedupe.mjs <file>         # order-preserving dedupe of a file
+  cat in.txt | node dedupe.mjs  # order-preserving dedupe of stdin (argument omitted or -)
+  node dedupe.mjs --help        # print usage, exit 0
 
-退出码:
-  0  成功（含空输入 → 无输出）
-  1  文件不存在 / 不可读 / 参数非法
+Exit codes:
+  0  success (including empty input → no output)
+  1  file missing / unreadable / invalid arguments
 ```
 
-- 输出：非空结果 = `join('\n') + '\n'`（末尾补一个换行）；空结果 = 无任何输出。
-- 错误信息写 stderr，格式：`dedupe: <原因>`（如 `dedupe: ENOENT: no such file or directory, open 'x.txt'`）。
+- Output: a non-empty result = `join('\n') + '\n'` (one trailing newline added); an empty result = no output at all.
+- Error messages go to stderr in the format `dedupe: <reason>` (e.g. `dedupe: ENOENT: no such file or directory, open 'x.txt'`).
 
-### 4.4 边界与取舍
+### 4.4 Edge cases and trade-offs
 
-| 场景 | 行为 |
+| Scenario | Behavior |
 |---|---|
-| 空文件（0 字节） | 无输出，退出 0 |
-| 仅含换行 / 空行重复 | 空行参与去重，重复空行只留首个 |
-| CRLF 文件 | 行内容不含 `\r`，输出统一 LF |
-| 末行无换行 | 正常参与去重，输出时补末尾换行 |
-| 行含首尾空格 / 大小写差异 | 原样比较，`a` 与 `A`、`"a"` 与 `" a "` 视为不同行 |
-| 中文 / emoji / 任意 UTF-8 | `readFileSync(utf8)` 原样读写，不做转码 |
-| 大文件 | v1 全量读入内存（简单优先）；扩展：`readline` 逐行 + 增量 Set，接口不变 |
-| 权限拒绝 / 路径为目录 | 捕获 EACCES 等错误 → stderr + 退出 1 |
+| Empty file (0 bytes) | No output, exit 0 |
+| Only newlines / repeated empty lines | Empty lines are deduped; repeated empty lines keep only the first |
+| CRLF file | Line content contains no `\r`; output is always LF |
+| Last line without a newline | Deduped normally; a trailing newline is added on output |
+| Leading/trailing spaces / case differences | Compared verbatim: `a` vs `A`, `"a"` vs `" a "` are different lines |
+| Chinese / emoji / any UTF-8 | `readFileSync(utf8)` reads and writes as-is, no transcoding |
+| Large files | v1 reads everything into memory (simplicity first); extension: `readline` line by line + incremental Set, same interface |
+| Permission denied / path is a directory | Catch EACCES and similar errors → stderr + exit 1 |
 
-## 5. 验收计划
+## 5. Acceptance plan
 
-### 5.1 基线用例（对应知识库已验证通过的 5 用例）
+### 5.1 Baseline cases (the 5 cases already validated in the knowledge base)
 
-| # | 用例 | 期望 |
+| # | Case | Expected |
 |---|---|---|
-| ① | 基本去重 `apple/banana/apple/cherry/banana` | `apple/banana/cherry` |
-| ② | 重复空行 | 只保留首个空行 |
-| ③ | CRLF 换行 | 按行正确，输出无 `\r` |
-| ④ | 空文件 | 无输出，退出码 0 |
-| ⑤ | 文件不存在 | stderr 报错，退出码 1 |
+| ① | Basic dedupe `apple/banana/apple/cherry/banana` | `apple/banana/cherry` |
+| ② | Repeated empty lines | Only the first empty line is kept |
+| ③ | CRLF line endings | Lines split correctly, no `\r` in the output |
+| ④ | Empty file | No output, exit code 0 |
+| ⑤ | File missing | Error on stderr, exit code 1 |
 
-### 5.2 新增用例（本设计扩展）
+### 5.2 New cases (extensions in this design)
 
-| # | 用例 | 期望 |
+| # | Case | Expected |
 |---|---|---|
-| ⑥ | stdin：`printf 'a\nb\na\n' \| node dedupe.mjs` | 输出 `a\nb` |
-| ⑦ | `node dedupe.mjs -`（显式 `-`） | 同 ⑥ |
-| ⑧ | `node dedupe.mjs --help` | 打印用法，退出码 0 |
-| ⑨ | 末行无换行：`printf 'x\ny\nx'` | 输出 `x\ny`（末尾补换行） |
-| ⑩ | 大小写/空格敏感：`a`、`A`、` a` | 三行都保留 |
+| ⑥ | stdin: `printf 'a\nb\na\n' \| node dedupe.mjs` | Output `a\nb` |
+| ⑦ | `node dedupe.mjs -` (explicit `-`) | Same as ⑥ |
+| ⑧ | `node dedupe.mjs --help` | Prints usage, exit code 0 |
+| ⑨ | Last line without a newline: `printf 'x\ny\nx'` | Output `x\ny` (trailing newline added) |
+| ⑩ | Case/space sensitive: `a`, `A`, ` a` | All three lines are kept |
 
-### 5.3 验收命令
+### 5.3 Acceptance commands
 
 ```bash
-# 用例①
+# Case ①
 printf 'apple\nbanana\napple\ncherry\nbanana\n' > /tmp/dedupe-in.txt
-node dedupe.mjs /tmp/dedupe-in.txt   # 期望: apple banana cherry（各一行）
-# 用例④
-: > /tmp/dedupe-empty.txt && node dedupe.mjs /tmp/dedupe-empty.txt && echo "exit=$?"  # exit=0 且无输出
-# 用例⑤
-node dedupe.mjs /tmp/不存在.txt; echo "exit=$?"   # stderr 报错，exit=1
+node dedupe.mjs /tmp/dedupe-in.txt   # expected: apple banana cherry (one per line)
+# Case ④
+: > /tmp/dedupe-empty.txt && node dedupe.mjs /tmp/dedupe-empty.txt && echo "exit=$?"  # exit=0 and no output
+# Case ⑤
+node dedupe.mjs /tmp/does-not-exist.txt; echo "exit=$?"   # error on stderr, exit=1
 ```
 
-## 6. 参考
+## 6. References
 
-- 知识库「Yolo验证-去重CLI」：原型 `dedupe.mjs`（零依赖 Node ESM，~30 行，Set 保序去重）及其 5 用例验证记录。
-- 知识库「校准验证-计算器」/「校准验证-待办CLI」：同风格零依赖 Node CLI 的既有实现范式（用法、退出码、错误处理约定）。
+- Knowledge-base entry "Yolo validation - dedupe CLI": the prototype `dedupe.mjs` (zero-dependency Node ESM, ~30 lines, Set-based order-preserving dedupe) and its 5-case validation record.
+- Knowledge-base entries "Calibration validation - calculator" / "Calibration validation - todo CLI": the established pattern for zero-dependency Node CLIs in the same style (usage, exit codes, error-handling conventions).

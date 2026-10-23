@@ -1,9 +1,9 @@
-// 职责：看板 —— 五列（Pending/Running/Failed/Done/Cancelled；Running 列含 Waiting 目标契约）。
-// M2.3（O1=B）：看板按**资产卡**展示 —— 卡状态 = 最新一次执行的状态；卡上显示里程碑 + 执行次数；
-// 点卡 → 详情抽屉（全部执行代次，可 fork）。
-// 卡片信息层级：标题 + 里程碑徽章 → 依赖 chips（目标契约）→ 最后活动 → 执行 ×N → 操作行。
-// 红线 1：前端不改状态——拖拽/运行/重跑都是发事件（真实契约仅 POST cards/executions；其余目标契约占位）。
-// 阻塞（依赖未完成）每次渲染现算（depsUnmet），绝不写状态字段。
+// Responsibility: board —— five columns (Pending/Running/Failed/Done/Cancelled; the Running column includes Waiting from the target contract).
+// M2.3 (O1=B): the board shows **asset cards** —— card status = status of the latest execution; cards show milestone + execution count;
+// click a card → detail drawer (all execution generations, can fork).
+// Card information hierarchy: title + milestone badge → dependency chips (target contract) → last activity → executions ×N → action row.
+// Red line 1: the frontend never changes state —— drag / run / rerun all send events (the real contract only has POST cards/executions; the rest are target-contract placeholders).
+// Blocked (unfinished dependencies) is computed on every render (depsUnmet), never written to a state field.
 import { useMemo, useState } from 'react';
 import { useUi, writeHash } from '../store/ui';
 import {
@@ -13,11 +13,11 @@ import {
 import { LoadingState } from '../components/LoadingState';
 
 const COLS: { key: TaskState['status']; label: string }[] = [
-  { key: 'Pending', label: '待办' },
-  { key: 'Running', label: '进行中' },
-  { key: 'Failed', label: '失败' },
-  { key: 'Done', label: '完成' },
-  { key: 'Cancelled', label: '已取消' },
+  { key: 'Pending', label: 'To do' },
+  { key: 'Running', label: 'In progress' },
+  { key: 'Failed', label: 'Failed' },
+  { key: 'Done', label: 'Done' },
+  { key: 'Cancelled', label: 'Cancelled' },
 ];
 
 export function KanbanView({ pid }: { pid: string }) {
@@ -38,34 +38,34 @@ export function KanbanView({ pid }: { pid: string }) {
   };
 
   const runCard = async (c: CardState) => {
-    // §2.1 调度门：依赖未完成 → 服务端 409（前端已禁用按钮，双保险）
-    if (conn !== 'online') { toast('断连期间禁用控制操作'); return; }
+    // §2.1 scheduling gate: unfinished dependencies → server returns 409 (the frontend already disables the button, belt and braces)
+    if (conn !== 'online') { toast('Control actions are disabled while disconnected'); return; }
     const sid = await useProjection.getState().forkExecution(c.id, undefined);
-    if (sid) toast('已启动执行');
+    if (sid) toast('Execution started');
   };
 
   const retryCard = async (c: CardState) => {
-    if (conn !== 'online') { toast('断连期间禁用控制操作'); return; }
+    if (conn !== 'online') { toast('Control actions are disabled while disconnected'); return; }
     const sid = await useProjection.getState().forkExecution(c.id, undefined);
-    if (sid) toast('重跑 = 新执行代次（保留原事件流供 diff）');
+    if (sid) toast('Rerun = new execution generation (the original event stream is kept for diffing)');
   };
 
   const onDrop = async (c: CardState, target: string) => {
     const st = cardStatus(c);
-    if (st === 'Running' || st === 'Waiting') return; // 锁死
-    if (conn !== 'online') { toast('断连期间禁用控制操作'); return; }
-    // 红线 1：拖拽 = 事件（POST /api/cards/:id/status，手动标记语义）
+    if (st === 'Running' || st === 'Waiting') return; // locked
+    if (conn !== 'online') { toast('Control actions are disabled while disconnected'); return; }
+    // Red line 1: drag = event (POST /api/cards/:id/status, manual-mark semantics)
     const map: Record<string, 'Done' | 'Failed' | 'Pending'> = { done: 'Done', fail: 'Failed', todo: 'Pending' };
     const status = map[target];
     if (!status) return;
     const ok = await useProjection.getState().markCardStatus(c.id, status);
-    toast(ok ? `已手动标记「${target}」（事件接口 · 状态可审计）` : '标记失败，见错误横幅');
+    toast(ok ? `Manually marked "${target}" (event API · status is auditable)` : 'Marking failed, see the error banner');
   };
 
   if (loading && !all.length) {
     return (
       <div className="kanban-wrap" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <LoadingState variant="drive" label="加载看板…" />
+        <LoadingState variant="drive" label="Loading board…" />
       </div>
     );
   }
@@ -75,13 +75,13 @@ export function KanbanView({ pid }: { pid: string }) {
   return (
     <div className="kanban-wrap">
       {milestones.length > 0 ? (
-        <div className="kbar" role="tablist" aria-label="按里程碑筛选">
-          <span className="kbar-label">里程碑</span>
+        <div className="kbar" role="tablist" aria-label="Filter by milestone">
+          <span className="kbar-label">Milestone</span>
           <button
             type="button"
             className={'kbar-chip' + (milestoneFilter === null ? ' active' : '')}
             onClick={() => setMilestoneFilter(null)}
-          >全部</button>
+          >All</button>
           {milestones.map((m) => {
             const done = all.filter((c) => c.milestone === m && cardStatus(c) === 'Done').length;
             const total = all.filter((c) => c.milestone === m).length;
@@ -91,7 +91,7 @@ export function KanbanView({ pid }: { pid: string }) {
                 key={m}
                 className={'kbar-chip' + (milestoneFilter === m ? ' active' : '')}
                 onClick={() => setMilestoneFilter(milestoneFilter === m ? null : m)}
-                title={`${m}：${done}/${total} 完成`}
+                title={`${m}: ${done}/${total} done`}
               >
                 {m}
                 <span className="kbar-count">{done}/{total}</span>
@@ -130,7 +130,7 @@ export function KanbanView({ pid }: { pid: string }) {
               <span className="count">{headCount}</span>
             </div>
             <div className="kcol-body">
-              {items.length === 0 && <div className="kempty">暂无</div>}
+              {items.length === 0 && <div className="kempty">Empty</div>}
               {items.map((c, k) => {
                 const st = cardStatus(c);
                 const locked = st === 'Running' || st === 'Waiting';
@@ -140,14 +140,14 @@ export function KanbanView({ pid }: { pid: string }) {
                 let act: React.ReactNode = null;
                 if (st === 'Pending') {
                   act = unmet.length
-                    ? <span className="run-state">等上游：{unmet.join('、')}</span>
-                    : <button className="btn mini" onClick={(e) => { e.stopPropagation(); void runCard(c); }}>运行</button>;
+                    ? <span className="run-state">Waiting on upstream: {unmet.join(', ')}</span>
+                    : <button className="btn mini" onClick={(e) => { e.stopPropagation(); void runCard(c); }}>Run</button>;
                 } else if (st === 'Running') {
-                  act = <span className="run-state">运行中 · 锁死（评论即控制）</span>;
+                  act = <span className="run-state">Running · locked (control via comments)</span>;
                 } else if (st === 'Waiting') {
-                  act = <span className="waiting-q">等待批复 · 锁死</span>;
+                  act = <span className="waiting-q">Awaiting approval · locked</span>;
                 } else if (st === 'Failed' || st === 'Cancelled') {
-                  act = <button className="btn mini ghost" onClick={(e) => { e.stopPropagation(); void retryCard(c); }}>重跑</button>;
+                  act = <button className="btn mini ghost" onClick={(e) => { e.stopPropagation(); void retryCard(c); }}>Rerun</button>;
                 }
                 return (
                   <div
@@ -172,17 +172,17 @@ export function KanbanView({ pid }: { pid: string }) {
                     <div className="kt">
                       {c.title || c.id.slice(0, 14)}
                       {c.milestone ? <span className="milestone-chip">{c.milestone}</span> : null}
-                      {exec?.recovered ? <span className="rec">恢复</span> : null}
+                      {exec?.recovered ? <span className="rec">Recovered</span> : null}
                       {locked ? <span className="lock-tag">🔒</span> : null}
                     </div>
-                    {unmet.length ? <div className="ksum"><span className="dep blocked">← {unmet.join('、')}</span></div> : null}
+                    {unmet.length ? <div className="ksum"><span className="dep blocked">← {unmet.join(', ')}</span></div> : null}
                     {lastAct ? (
                       <div className="ksum">
                         <span className="ellip">{fmtTime(exec?.started_at ?? exec?.finished_at)} · {activityText(lastAct).slice(0, 26)}</span>
                       </div>
                     ) : null}
                     <div className="ksum kexec">
-                      <span className="exec-count">⚙ 执行 ×{c.execution_count ?? Object.keys(c.executions).length}</span>
+                      <span className="exec-count">⚙ Executions ×{c.execution_count ?? Object.keys(c.executions).length}</span>
                       {exec?.model ? <span className="ellip">{exec.model}</span> : null}
                     </div>
                     <div className="kact">{act}</div>

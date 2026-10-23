@@ -1,8 +1,8 @@
-// [helmsman] D3-4 任务级 worktree 插件（引擎内化）。
-// 迁移点：worktree.ts 是纯 Node git 函数（无 ACP 依赖），原样搬入。
-// 引擎形态优势：tasks 插件建任务时 meta.cwd 直接用 worktree 路径，
-// agent 天然在隔离区执行（v1 要 server 换 cwd 再过 ACP 传 sessionNew）。
-// 接口：
+// [helmsman] D3-4 task-level worktree plugin (internalized into the engine).
+// Migration point: worktree.ts is plain Node git functions (no ACP dependency), ported as-is.
+// Advantage of the engine form: when the tasks plugin creates a task, meta.cwd uses the worktree path directly,
+// so the agent naturally runs in the isolation area (in v1 the server had to swap the cwd and pass it through ACP sessionNew).
+// Interface:
 //   POST /api/worktree/prepare  {repo, card_id, key} → {path, branch} | {ok:false,reason}
 //   POST /api/worktree/merge    {repo, worktree, message} → MergeResult
 //   POST /api/worktree/discard  {repo, worktree} → {ok:true}
@@ -13,7 +13,7 @@ import { join } from 'node:path'
 export const name = 'helmsman-worktree'
 export const inject = ['webServer']
 
-// ---------- 纯函数：从 server-ts/worktree.ts 原样搬 ----------
+// ---------- Pure functions: ported as-is from server-ts/worktree.ts ----------
 
 function runGit(repo, args, opts = {}) {
   return execFileSync('git', args, {
@@ -42,7 +42,7 @@ function branchName(cardId, key) {
   return `helmsman/${cardId}-${k.slice(0, 20)}`
 }
 
-/** 确保 .helmsman 目录不被 agent 的 git 操作污染（local exclude）。 */
+/** Keep the .helmsman directory from polluting the agent's git operations (local exclude). */
 function ensureLocalExclude(repo) {
   const info = join(repo, '.git', 'info', 'exclude')
   const line = '\n.helmsman/worktrees/\n'
@@ -51,19 +51,19 @@ function ensureLocalExclude(repo) {
       const cur = readFileSync(info, 'utf8')
       if (!cur.includes('.helmsman/worktrees/')) appendFileSync(info, line)
     }
-  } catch { /* 忽略 */ }
+  } catch { /* ignore */ }
 }
 
-/** 准备任务隔离区：git worktree add -b <branch> <path>。非 git 仓库 → null（回退共享目录）。 */
+/** Prepare the task isolation area: git worktree add -b <branch> <path>. Not a git repo → null (fall back to the shared directory). */
 function prepareTaskWorktree(repo, cardId, key) {
   if (!isGitRepo(repo)) {
-    console.warn(`[helmsman-worktree] 非 git 仓库，隔离区不可用（${repo}）—— 回退共享项目目录`)
+    console.warn(`[helmsman-worktree] not a git repo, isolation area unavailable (${repo}) —— falling back to the shared project directory`)
     return null
   }
   try {
     runGit(repo, ['rev-parse', '--verify', 'HEAD'])
   } catch {
-    console.warn(`[helmsman-worktree] 仓库无 HEAD（${repo}）—— 回退共享项目目录`)
+    console.warn(`[helmsman-worktree] repo has no HEAD (${repo}) —— falling back to the shared project directory`)
     return null
   }
   ensureLocalExclude(repo)
@@ -73,13 +73,13 @@ function prepareTaskWorktree(repo, cardId, key) {
   try {
     runGit(repo, ['worktree', 'add', '-b', branch, path], { timeout: 30000 })
   } catch {
-    console.warn(`[helmsman-worktree] 隔离区创建失败（${repo}）—— 回退共享项目目录`)
+    console.warn(`[helmsman-worktree] failed to create the isolation area (${repo}) —— falling back to the shared project directory`)
     return null
   }
   return { path, branch }
 }
 
-/** 合回主工作区：add → commit → merge --no-ff。返回 {ok, message}。 */
+/** Merge back into the main workspace: add → commit → merge --no-ff. Returns {ok, message}. */
 function mergeTaskWorktree(input) {
   const { repo, worktree, message } = input
   try {
@@ -94,7 +94,7 @@ function mergeTaskWorktree(input) {
   }
 }
 
-/** 丢弃隔离区：git worktree remove --force。 */
+/** Discard the isolation area: git worktree remove --force. */
 function discardTaskWorktree(repo, worktree) {
   try {
     runGit(repo, ['worktree', 'remove', '--force', worktree.path], { timeout: 30000 })
@@ -104,11 +104,11 @@ function discardTaskWorktree(repo, worktree) {
   }
 }
 
-// ---------- 插件主体：路由 ----------
+// ---------- Plugin body: routes ----------
 
 export function apply(ctx) {
   const { webServer } = ctx
-  // 内部服务：供 helmsman-tasks 建任务时自动隔离
+  // Internal service: lets helmsman-tasks isolate automatically when creating a task
   ctx.provide('helmsmanWorktree', {
     prepare: (repo, cardId, key) => prepareTaskWorktree(repo, cardId, key),
     discard: (repo, worktree) => discardTaskWorktree(repo, worktree),
@@ -153,7 +153,7 @@ export function apply(ctx) {
     },
   })
 
-  console.log('[helmsman-worktree] worktree 路由已注册：/api/worktree/*')
+  console.log('[helmsman-worktree] worktree routes registered: /api/worktree/*')
 }
 
 export default { name, inject, apply }

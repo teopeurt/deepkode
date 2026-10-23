@@ -1,10 +1,10 @@
-// 轻量 Markdown 渲染（无依赖）——支持标题/加粗/斜体/行内代码/代码块/列表/表格/分隔线。
-// 用途：计划内容、agent 消息等 markdown 文本展示（不引大库，避免构建链负担）。
-// 代码块走 CodeBlock（Beautiful UI 移植）：行号 listing；unified diff 可切 Code/Diff。
+// Lightweight Markdown rendering (no dependencies) —— supports headings / bold / italics / inline code / code blocks / lists / tables / horizontal rules.
+// Used for: showing markdown text such as plans and agent messages (no big library pulled in, to keep the build chain light).
+// Code blocks go through CodeBlock (ported from Beautiful UI): a line-numbered listing; unified diffs can switch between Code/Diff.
 import { useMemo, type ReactNode } from 'react';
 import { CodeBlock } from './CodeBlock';
 
-/** 行内格式：**加粗**、*斜体*、`代码` */
+/** Inline formatting: **bold**, *italic*, `code` */
 function inline(text: string): ReactNode[] {
   const parts: ReactNode[] = [];
   const re = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
@@ -23,16 +23,16 @@ function inline(text: string): ReactNode[] {
   return parts;
 }
 
-/** 解析一行表格：| a | b | → ['a','b'] */
+/** Parse one table row: | a | b | → ['a','b'] */
 function splitTableRow(line: string): string[] {
   return line.split('|').slice(1, -1).map((s) => s.trim());
 }
 
 export function Markdown({ text }: { text: string }) {
   const blocks = useMemo(() => {
-    // 纯 JSON 输出（无 ``` 围栏，如 distill 提炼结果 / agent 返回的结构化数据）：
-    // 整段 trim 后是合法 JSON → 直接按代码块渲染（等宽 + json 语法高亮），
-    // 避免显示成一坨普通文本。
+    // Pure JSON output (no ``` fence, e.g. distill results / structured data returned by the agent):
+    // if the whole text, trimmed, is valid JSON → render it directly as a code block (monospace + json syntax highlighting),
+    // instead of showing it as a lump of plain text.
     const trimmedWhole = text.trim();
     const looksJson =
       (trimmedWhole.startsWith('{') && trimmedWhole.endsWith('}')) ||
@@ -42,7 +42,7 @@ export function Markdown({ text }: { text: string }) {
         JSON.parse(trimmedWhole);
         return [<CodeBlock key="json" code={trimmedWhole} info="json" />];
       } catch {
-        // 不是合法 JSON，走普通 markdown 解析
+        // Not valid JSON, use normal markdown parsing
       }
     }
     const lines = text.split('\n');
@@ -51,17 +51,17 @@ export function Markdown({ text }: { text: string }) {
     let k = 0;
     while (i < lines.length) {
       const line = lines[i];
-      // 代码块
+      // Code block
       if (line.trim().startsWith('```')) {
         const info = line.trim().slice(3);
         const buf: string[] = [];
         i++;
         while (i < lines.length && !lines[i].trim().startsWith('```')) { buf.push(lines[i]); i++; }
-        i++; // 跳过闭合 ```
+        i++; // skip the closing ```
         out.push(<CodeBlock key={k++} code={buf.join('\n')} info={info} />);
         continue;
       }
-      // 标题
+      // Heading
       const h = /^(#{1,4})\s+(.*)$/.exec(line);
       if (h) {
         const level = h[1].length;
@@ -70,13 +70,13 @@ export function Markdown({ text }: { text: string }) {
         i++;
         continue;
       }
-      // 分隔线
+      // Horizontal rule
       if (/^\s*[-*_]{3,}\s*$/.test(line)) {
         out.push(<hr key={k++} className="md-hr" />);
         i++;
         continue;
       }
-      // 表格（当前行含 | 且下一行是分隔行）
+      // Table (the current line contains | and the next line is a separator row)
       if (line.includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes('-')) {
         const header = splitTableRow(line);
         const body: string[][] = [];
@@ -94,7 +94,7 @@ export function Markdown({ text }: { text: string }) {
         );
         continue;
       }
-      // 列表（- / * / 数字.）
+      // List (- / * / number.)
       if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line)) {
         const ordered = /^\s*\d+[.)]/.test(line);
         const items: ReactNode[] = [];
@@ -108,7 +108,7 @@ export function Markdown({ text }: { text: string }) {
           : <ul key={k++} className="md-ul">{items}</ul>);
         continue;
       }
-      // 普通行
+      // Plain line
       if (line.trim()) {
         out.push(<p key={k++} className="md-p">{inline(line)}</p>);
       }

@@ -1,61 +1,61 @@
-// [helmsman] 命令级白名单守卫（P1）—— tools/pre-execute 监听插件。
-// 挂在 guard 预设内（agent scope）：每个 agent 的工具调用在调度前都会过这里。
-// 职责：bash 命令的危险识别 + 白名单放行 + 危险命令转人工审批（ask）。
-// 审批缝：返回 { kind: 'ask', reason } → dsh-tools serviceAsk → ctx.approval.request
-//   → dsh-acp 桥 → ACP requestPermission → Helmsman 批复队列（Waiting{permission}）。
-// 注意：本插件不落盘记忆（每 agent 会话独立）；"拒绝幂等/记住"由 Helmsman 侧策略沉淀承接。
+// [helmsman] Command-level allowlist guard (P1) —— a tools/pre-execute listener plugin.
+// Mounted inside the guard preset (agent scope): every agent tool call passes through here before dispatch.
+// Responsibilities: identify dangerous bash commands + let allowlisted ones through + send dangerous commands for human approval (ask).
+// Approval seam: return { kind: 'ask', reason } → dsh-tools serviceAsk → ctx.approval.request
+//   → dsh-acp bridge → ACP requestPermission → Helmsman approval queue (Waiting{permission}).
+// Note: this plugin persists no memory (each agent session is independent); "idempotent rejection / remember" is handled by policy capture on the Helmsman side.
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-// 仅用 node 内置能力，避免依赖解析问题：预编译正则，纯函数匹配。
+// Only uses built-in node capabilities to avoid dependency-resolution issues: precompiled regexes, pure-function matching.
 
-/** 危险命令识别（前缀/正则精确匹配）。返回 { risk, reason } 或 null（安全放行）。 */
+/** Dangerous-command detection (exact prefix/regex matching). Returns { risk, reason } or null (safe, allowed). */
 const DANGER_PATTERNS = [
-  // 最危险优先：rm -rf 根目录/家目录/当前目录（必须最先匹配，避免被通用 rm 规则吞掉）
-  { re: /(^|\s)rm\s+-[a-zA-Z]*rf[a-zA-Z]*\s+(\/|~)(\s|$)/, risk: 'rm-root', label: 'rm -rf 根目录/家目录' },
-  { re: /(^|\s)rm\s+-[a-zA-Z]*rf[a-zA-Z]*\s+(\.|\.\/)\s*$/, risk: 'rm-root', label: 'rm -rf 当前目录' },
-  // sudo 提权（优先于被包装的危险命令本身——sudo rm 报"提权"更准确）
-  { re: /(^|\s)sudo\s+/, risk: 'sudo', label: 'sudo 提权命令' },
-  // 破坏性文件删除：rm -r/-rf 组合（仅删单文件的 rm -f 不危险）
-  { re: /(^|\s)rm\s+-[a-zA-Z]*rf[a-zA-Z]*\s+/, risk: 'rm', label: 'rm 递归/强制删除' },
-  { re: /(^|\s)rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+/, risk: 'rm', label: 'rm 递归删除' },
-  // git 危险操作
-  { re: /(^|\s)git\s+push(\s|$)/, risk: 'git-push', label: 'git push（推送远端）' },
-  { re: /(^|\s)git\s+reset\s+--hard\s+/, risk: 'git-reset-hard', label: 'git reset --hard（丢弃改动）' },
-  { re: /(^|\s)git\s+clean\s+(-[a-zA-Z]*f[a-zA-Z]*\s*)+/, risk: 'git-clean', label: 'git clean -f（删除未跟踪）' },
-  { re: /(^|\s)git\s+checkout\s+--\s+/, risk: 'git-checkout-dot', label: 'git checkout --（丢弃工作区改动）' },
-  { re: /(^|\s)git\s+branch\s+-D\s+/, risk: 'git-branch-D', label: 'git branch -D（强删分支）' },
-  // 危险重定向/覆盖
-  { re: /(^|\s)>\s*\/dev\/sd[a-z]/, risk: 'disk-write', label: '直接写磁盘设备' },
-  { re: /(^|\s)mkfs\./, risk: 'mkfs', label: '格式化磁盘' },
-  // 危险下载执行
-  { re: /(^|\s)curl\s+.*\|\s*(sh|bash)\s*$/, risk: 'curl-pipe-sh', label: 'curl 管道执行 shell' },
-  { re: /(^|\s)wget\s+.*\|\s*(sh|bash)\s*$/, risk: 'wget-pipe-sh', label: 'wget 管道执行 shell' },
-  // 系统管理
-  { re: /(^|\s)(shutdown|reboot|poweroff|halt)\s*$/, risk: 'sysctl', label: '关机/重启' },
-  { re: /(^|\s)kill\s+-9\s+/, risk: 'kill-9', label: 'kill -9（强杀）' },
+  // Most dangerous first: rm -rf on the root / home / current directory (must match first so the generic rm rule does not swallow it)
+  { re: /(^|\s)rm\s+-[a-zA-Z]*rf[a-zA-Z]*\s+(\/|~)(\s|$)/, risk: 'rm-root', label: 'rm -rf on the root/home directory' },
+  { re: /(^|\s)rm\s+-[a-zA-Z]*rf[a-zA-Z]*\s+(\.|\.\/)\s*$/, risk: 'rm-root', label: 'rm -rf on the current directory' },
+  // sudo privilege escalation (takes priority over the wrapped dangerous command itself —— reporting "privilege escalation" for sudo rm is more accurate)
+  { re: /(^|\s)sudo\s+/, risk: 'sudo', label: 'sudo privilege escalation' },
+  // Destructive file deletion: rm -r/-rf combinations (rm -f on a single file is not dangerous)
+  { re: /(^|\s)rm\s+-[a-zA-Z]*rf[a-zA-Z]*\s+/, risk: 'rm', label: 'rm recursive/forced delete' },
+  { re: /(^|\s)rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+/, risk: 'rm', label: 'rm recursive delete' },
+  // Dangerous git operations
+  { re: /(^|\s)git\s+push(\s|$)/, risk: 'git-push', label: 'git push (push to remote)' },
+  { re: /(^|\s)git\s+reset\s+--hard\s+/, risk: 'git-reset-hard', label: 'git reset --hard (discards changes)' },
+  { re: /(^|\s)git\s+clean\s+(-[a-zA-Z]*f[a-zA-Z]*\s*)+/, risk: 'git-clean', label: 'git clean -f (deletes untracked files)' },
+  { re: /(^|\s)git\s+checkout\s+--\s+/, risk: 'git-checkout-dot', label: 'git checkout -- (discards working-tree changes)' },
+  { re: /(^|\s)git\s+branch\s+-D\s+/, risk: 'git-branch-D', label: 'git branch -D (force-deletes a branch)' },
+  // Dangerous redirection/overwrite
+  { re: /(^|\s)>\s*\/dev\/sd[a-z]/, risk: 'disk-write', label: 'writing directly to a disk device' },
+  { re: /(^|\s)mkfs\./, risk: 'mkfs', label: 'formatting a disk' },
+  // Dangerous download-and-execute
+  { re: /(^|\s)curl\s+.*\|\s*(sh|bash)\s*$/, risk: 'curl-pipe-sh', label: 'curl piped into a shell' },
+  { re: /(^|\s)wget\s+.*\|\s*(sh|bash)\s*$/, risk: 'wget-pipe-sh', label: 'wget piped into a shell' },
+  // System administration
+  { re: /(^|\s)(shutdown|reboot|poweroff|halt)\s*$/, risk: 'sysctl', label: 'shutdown/reboot' },
+  { re: /(^|\s)kill\s+-9\s+/, risk: 'kill-9', label: 'kill -9 (force kill)' },
   { re: /(^|\s)chmod\s+777\s+/, risk: 'chmod-777', label: 'chmod 777' },
-  { re: /(^|\s)chown\s+-R\s+/, risk: 'chown-R', label: 'chown -R（递归改属主）' },
+  { re: /(^|\s)chown\s+-R\s+/, risk: 'chown-R', label: 'chown -R (recursive ownership change)' },
 ]
 
-/** 安全白名单：允许的危险命令精确形式（命令前缀匹配，防误伤正常操作）。 */
+/** Safety allowlist: exact forms of otherwise-dangerous commands that are allowed (command-prefix match, so normal operations are not blocked). */
 const ALLOW_PREFIXES = [
-  'rm -rf /tmp/',      // 清自己的临时区
-  'rm -rf ./dist',     // 清构建产物
-  'rm -rf dist',       // 同上（无 ./）
-  'rm -rf node_modules', // 重装依赖
+  'rm -rf /tmp/',      // clean our own temp area
+  'rm -rf ./dist',     // clean build output
+  'rm -rf dist',       // same as above (without ./)
+  'rm -rf node_modules', // reinstall dependencies
   'rm -rf .pnpm-store',
 ]
 
 /**
- * 匹配一条 bash 命令。
- * @param {string} command 完整命令（bash 工具的 command 参数）
- * @returns {{ risk: string, label: string } | null} 危险则返回描述，安全则 null
+ * Match one bash command.
+ * @param {string} command the full command (the bash tool's command argument)
+ * @returns {{ risk: string, label: string } | null} a description if dangerous, null if safe
  */
 export function matchDanger(command) {
   const trimmed = String(command ?? '').trim()
   if (!trimmed) return null
-  // 白名单精确前缀：先放行，避免把允许的清构建/重装当危险
+  // Exact allowlist prefixes: let them through first so allowed build cleanups / reinstalls are not flagged as dangerous
   for (const p of ALLOW_PREFIXES) {
     if (trimmed.startsWith(p)) return null
   }
@@ -67,23 +67,23 @@ export function matchDanger(command) {
   return null
 }
 
-/** Cordis 插件名。 */
+/** Cordis plugin name. */
 export const name = 'helmsman-command-guard'
-/** 无需注入服务：pre-execute 是作用域 waterfall 事件，ctx.on 即可监听。 */
+/** No services to inject: pre-execute is a scoped waterfall event, ctx.on is enough to listen. */
 export const inject = []
 
-/** 插件主体：监听 tools/pre-execute，危险 bash 命令 → ask（人工审批）。 */
+/** Plugin body: listen to tools/pre-execute; dangerous bash command → ask (human approval). */
 export function apply(ctx) {
   ctx.on('tools/pre-execute', (exec, next) => {
-    // 只审 bash 工具调用（其他工具如 fs 由沙箱管）
+    // Only review bash tool calls (other tools such as fs are governed by the sandbox)
     if (exec?.name !== 'bash') return next()
     const command = exec.arguments?.command
     const hit = matchDanger(command)
     if (hit === null) return next()
-    // 危险命令 → 转人工审批。reason 会原样送达 answerer（Helmsman 批复卡展示）。
+    // Dangerous command → send for human approval. reason is delivered verbatim to the answerer (shown on the Helmsman approval card).
     return {
       kind: 'ask',
-      reason: `命令级白名单：检测到「${hit.label}」（风险 ${hit.risk}）。命令：${String(command).slice(0, 200)}`,
+      reason: `Command-level allowlist: detected "${hit.label}" (risk ${hit.risk}). Command: ${String(command).slice(0, 200)}`,
     }
   })
 }

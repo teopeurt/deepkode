@@ -1,12 +1,12 @@
-// 职责：改动表（Beautiful UI「Diff Table」移植，MIT © Shane Levine）——
-//   AI 提议的表格改动：列定义 + 行（选中态）+ 单元格改动标记（add 绿 / del 红删除线 / mod 黄）。
-//   纯展示组件；验收证据里把 git diffstat 解析成行接入。
+// Responsibility: change table (port of Beautiful UI's "Diff Table", MIT © Shane Levine) ——
+//   AI-proposed table changes: column definitions + rows (selected state) + per-cell change markers (add green / del red strikethrough / mod yellow).
+//   A display-only component; the acceptance evidence parses git diffstat into rows and feeds it in.
 export type DiffCellKind = 'plain' | 'add' | 'del' | 'mod';
 
 export interface DiffCell {
   text: string;
   kind?: DiffCellKind;
-  /** chip 形态（如状态标签） */
+  /** Chip style (e.g. status tags) */
   chip?: { label: string; dot?: boolean };
 }
 
@@ -64,9 +64,9 @@ export function DiffTable({ title, columns, rows, footer }: Props) {
 }
 
 /**
- * 解析 `git diff --stat` 输出为 DiffTable 行。
- * 行格式：` path/to/file | 12 +++++-------`（+ 数 = 增，- 数 = 删，总和 = 变动行数）
- * 尾行（"N files changed, X insertions(+), Y deletions(-)"）作为 footer。
+ * Parse `git diff --stat` output into DiffTable rows.
+ * Line format: ` path/to/file | 12 +++++-------` (number of + = added, number of - = removed, total = changed lines)
+ * The trailing line ("N files changed, X insertions(+), Y deletions(-)") becomes the footer.
  */
 export function parseDiffStat(stat: string): { rows: DiffRow[]; footer?: string } {
   const rows: DiffRow[] = [];

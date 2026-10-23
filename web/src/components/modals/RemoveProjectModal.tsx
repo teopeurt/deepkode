@@ -1,5 +1,5 @@
-// 职责：移除项目确认弹窗 —— 两个粒度：仅移除（可恢复，会话归档 + 重新导入恢复）/
-// 彻底清理（删 helmsman 侧会话与记录）。用户项目目录/文件在任何模式下都不动。
+// Responsibility: remove-project confirmation dialog —— two levels: remove only (recoverable; sessions archived + restored on re-import) /
+// full cleanup (deletes helmsman-side sessions and records). The user's project directory/files are never touched in either mode.
 import { useState } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
@@ -19,41 +19,41 @@ export function RemoveProjectModal({ pid, name, onClose }: { pid: string; name: 
     setBusy(null);
     if (ok) {
       removePending(pid);
-      toast(mode === 'archive' ? '已移除（可恢复）· 重新导入同目录即可找回' : '已彻底清理');
+      toast(mode === 'archive' ? 'Removed (recoverable) · re-import the same directory to get it back' : 'Fully cleaned up');
       onClose();
       useUi.getState().setRoute({ pid: null, view: 'home', openId: null, tab: 'comments', sessionId: null });
       writeHash(null, 'home', null, 'comments');
     } else {
-      toast('移除失败');
+      toast('Removal failed');
     }
   };
 
   return (
     <Modal open onClose={onClose} wide>
       <div className="set-head">
-        <h3>移除项目 · {name}</h3>
-        <Button variant="quiet" mini onClick={onClose}>取消</Button>
+        <h3>Remove project · {name}</h3>
+        <Button variant="quiet" mini onClick={onClose}>Cancel</Button>
       </div>
       <div className="set-body">
         <div className="note" style={{ marginBottom: 12 }}>
-          两种模式都<b>不会删除你的项目目录和文件</b>，只处理 helmsman 侧数据（任务记录、会话日志、设置）。
+          Neither mode <b>deletes your project directory or files</b>; only helmsman-side data (task records, session logs, settings) is affected.
         </div>
         <div className="set-row">
           <div className="lbl">
-            仅移除（可恢复）
-            <div className="desc">从工作台移除；任务会话归档保留，之后重新导入同目录自动恢复</div>
+            Remove only (recoverable)
+            <div className="desc">Removed from the workspace; task sessions are archived and kept, and re-importing the same directory later restores them automatically</div>
           </div>
           <Button variant="primary" mini disabled={busy !== null} onClick={() => void doRemove('archive')}>
-            {busy === 'archive' ? '移除中…' : '仅移除'}
+            {busy === 'archive' ? 'Removing…' : 'Remove only'}
           </Button>
         </div>
         <div className="set-row">
           <div className="lbl">
-            彻底清理
-            <div className="desc">删除 helmsman 侧的会话日志与记录，不可恢复</div>
+            Full cleanup
+            <div className="desc">Deletes helmsman-side session logs and records; cannot be undone</div>
           </div>
           <Button variant="ghost" mini disabled={busy !== null} onClick={() => void doRemove('purge')} style={{ color: 'var(--red)' }}>
-            {busy === 'purge' ? '清理中…' : '彻底清理'}
+            {busy === 'purge' ? 'Cleaning up…' : 'Full cleanup'}
           </Button>
         </div>
       </div>

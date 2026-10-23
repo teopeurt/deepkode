@@ -1,22 +1,22 @@
-// 职责：换装皮肤系统（Skin System v2 轻量模型）—— 皮肤包数据模型、校验、持久化、注入。
-// 皮肤包 = 三个可选文件（至少一个）：
-//   tokens?  25 键色板子集（theme.json 的 tokens 字段）——只覆盖皮肤有的键，缺省回落内置主题
-//   css?     theme.css 任意 CSS 覆盖（彻底变装靠它）
-//   bg?      背景图（DataURL 或 URL）
-// 应用机制：token 覆盖走 CSSOM setProperty；css 走动态 <style id="helmsman-skin"> 注入；
-//   背景走 body style；一键还原 = 全部移除。
+// Responsibility: skin system (Skin System v2 lightweight model) —— skin pack data model, validation, persistence, injection.
+// A skin pack = three optional files (at least one):
+//   tokens?  a subset of the 25-key palette (the tokens field of theme.json) —— only overrides the keys the skin has; the rest fall back to the built-in theme
+//   css?     theme.css, arbitrary CSS overrides (full makeovers rely on it)
+//   bg?      background image (DataURL or URL)
+// How it is applied: token overrides via CSSOM setProperty; css via a dynamic <style id="helmsman-skin"> injection;
+//   background via body style; one-click restore = remove everything.
 import { TK_MAP, type TokenKey } from './themes';
 
 export interface UserSkin {
   id: string;
   name: string;
-  /** 25 键 token 子集（theme.json 的 tokens 字段；键必须是合法 TokenKey） */
+  /** Subset of the 25 tokens (the tokens field of theme.json; keys must be valid TokenKeys) */
   tokens?: Partial<Record<TokenKey, string>>;
-  /** theme.css 原文 */
+  /** Raw theme.css */
   css?: string;
-  /** 背景图（DataURL / URL） */
+  /** Background image (DataURL / URL) */
   bg?: string;
-  /** 背景定位参数（可选，对应 art.focusX/Y + safeArea） */
+  /** Background positioning parameters (optional, corresponding to art.focusX/Y + safeArea) */
   bgFocus?: { x: string; y: string };
   createdAt: number;
 }
@@ -26,7 +26,7 @@ const LS_ACTIVE = 'helmsman-skin-active';
 
 const STYLE_ID = 'helmsman-skin';
 
-/** 读用户皮肤表（localStorage，损坏容错） */
+/** Read the user skin table (localStorage, tolerates corruption) */
 export function loadSkins(): Record<string, UserSkin> {
   try {
     const raw = localStorage.getItem(LS_SKINS);
@@ -43,11 +43,11 @@ function saveSkins(skins: Record<string, UserSkin>): void {
   try {
     localStorage.setItem(LS_SKINS, JSON.stringify(skins));
   } catch {
-    // 存储满/禁用时静默失败（皮肤不持久化，本次会话仍生效）
+    // Fails silently when storage is full/disabled (the skin is not persisted but still works for this session)
   }
 }
 
-/** 读当前激活皮肤 id（无则 null = 内置主题） */
+/** Read the active skin id (null if none = built-in theme) */
 export function loadActiveSkinId(): string | null {
   try {
     return localStorage.getItem(LS_ACTIVE);
@@ -61,28 +61,28 @@ function saveActiveSkinId(id: string | null): void {
     if (id == null) localStorage.removeItem(LS_ACTIVE);
     else localStorage.setItem(LS_ACTIVE, id);
   } catch {
-    // 同上静默
+    // Same as above, silent
   }
 }
 
-/** 校验皮肤名（唯一性由调用方保证） */
+/** Validate a skin name (uniqueness is guaranteed by the caller) */
 export function validSkinName(name: string): boolean {
   return typeof name === 'string' && name.trim().length > 0 && name.trim().length <= 40;
 }
 
-/** 校验一个 token 覆盖包：键必须是 25 键白名单内，值必须是合法 CSS 颜色/字符串。 */
+/** Validate a token override pack: keys must be in the 25-key allowlist, values must be valid CSS colors/strings. */
 export function validateTokens(tokens: unknown): Partial<Record<TokenKey, string>> | null {
   if (typeof tokens !== 'object' || tokens === null || Array.isArray(tokens)) return null;
   const out: Partial<Record<TokenKey, string>> = {};
   for (const [k, v] of Object.entries(tokens)) {
-    if (!(k in TK_MAP)) return null; // 白名单外键 → 整个拒绝（防坏包）
+    if (!(k in TK_MAP)) return null; // key outside the allowlist → reject the whole pack (guards against bad packs)
     if (typeof v !== 'string' || v.trim() === '') return null;
     out[k as TokenKey] = v;
   }
-  return Object.keys(out).length > 0 ? out : null; // 空对象 = 无有效覆盖
+  return Object.keys(out).length > 0 ? out : null; // empty object = no valid overrides
 }
 
-/** 校验皮肤 JSON 文本 → UserSkin（缺省 id 自动生成）。返回 null = 坏包。 */
+/** Validate skin JSON text → UserSkin (an id is generated if missing). Returns null = bad pack. */
 export function parseSkinJson(text: string): UserSkin | null {
   let parsed: unknown;
   try {
@@ -94,15 +94,15 @@ export function parseSkinJson(text: string): UserSkin | null {
   const p = parsed as Record<string, unknown>;
   const name = typeof p.name === 'string' && validSkinName(p.name) ? p.name.trim() : null;
   const tokens = p.tokens !== undefined ? validateTokens(p.tokens) : undefined;
-  // tokens 存在但校验失败（白名单外键/坏值）→ 整个拒包
+  // tokens present but invalid (key outside the allowlist / bad value) → reject the whole pack
   if (p.tokens !== undefined && tokens === null) return null;
   const css = typeof p.css === 'string' && p.css.trim() ? p.css : undefined;
   const bg = typeof p.bg === 'string' && p.bg.startsWith('data:') ? p.bg : undefined;
-  // 至少一个有效内容（name 只是元数据，不算内容）
+  // At least one valid piece of content (name is only metadata and doesn't count)
   if (!tokens && !css && !bg) return null;
   return {
     id: typeof p.id === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(p.id) ? p.id : genSkinId(),
-    name: name ?? '未命名皮肤',
+    name: name ?? 'Untitled skin',
     ...(tokens ? { tokens } : {}),
     ...(css ? { css } : {}),
     ...(bg ? { bg } : {}),
@@ -110,12 +110,12 @@ export function parseSkinJson(text: string): UserSkin | null {
   };
 }
 
-/** 生成皮肤 id（时间戳 + 随机） */
+/** Generate a skin id (timestamp + random) */
 export function genSkinId(): string {
   return 'skin-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 }
 
-/** 解析 zip 皮肤包（theme.css + 可选 theme.json/background）。极简 zip 解析（无依赖）。 */
+/** Parse a zip skin pack (theme.css + optional theme.json/background). Minimal zip parsing (no dependencies). */
 export async function parseSkinZip(file: File): Promise<UserSkin | null> {
   const MAX_ZIP = 2 * 1024 * 1024; // zip ≤ 2 MiB
   const MAX_CSS = 512 * 1024; // css ≤ 512 KiB
@@ -132,12 +132,12 @@ export async function parseSkinZip(file: File): Promise<UserSkin | null> {
       try {
         meta = JSON.parse(decoder.decode(themeJson.data)) as Record<string, unknown>;
       } catch {
-        return null; // 坏 theme.json → 拒包
+        return null; // bad theme.json → reject the pack
       }
     }
     const tokens = meta.tokens !== undefined ? validateTokens(meta.tokens) : undefined;
-    if (meta.tokens !== undefined && tokens === null) return null; // 坏 tokens → 拒包
-    const name = typeof meta.name === 'string' && validSkinName(meta.name) ? meta.name.trim() : 'zip 皮肤';
+    if (meta.tokens !== undefined && tokens === null) return null; // bad tokens → reject the pack
+    const name = typeof meta.name === 'string' && validSkinName(meta.name) ? meta.name.trim() : 'zip skin';
     let css: string | undefined;
     if (themeCss) {
       if (themeCss.data.length > MAX_CSS) return null;
@@ -165,14 +165,14 @@ export async function parseSkinZip(file: File): Promise<UserSkin | null> {
 
 const decoder = new TextDecoder('utf-8');
 
-/** 极简 zip 条目解析：定位本地文件头（PK\x03\x04），按各条目数据长度推进（仅 store/无压缩）。 */
+/** Minimal zip entry parsing: find local file headers (PK\x03\x04) and advance by each entry's data length (store/uncompressed only). */
 function parseZipEntries(buf: Uint8Array): Array<{ name: string; data: Uint8Array }> {
   const out: Array<{ name: string; data: Uint8Array }> = [];
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   let i = 0;
   while (i + 30 <= buf.length) {
-    if (view.getUint32(i, true) !== 0x04034b50) break; // 本地文件头签名
-    const method = view.getUint16(i + 8, true); // 0 = store（不压缩）
+    if (view.getUint32(i, true) !== 0x04034b50) break; // local file header signature
+    const method = view.getUint16(i + 8, true); // 0 = store (uncompressed)
     const compSize = view.getUint32(i + 18, true);
     const nameLen = view.getUint16(i + 26, true);
     const extraLen = view.getUint16(i + 28, true);
@@ -199,20 +199,20 @@ function toDataUrl(name: string, data: Uint8Array): string | null {
   return 'data:' + mime + ';base64,' + btoa(bin);
 }
 
-// ---------- 注入 / 还原 ----------
+// ---------- Injection / restore ----------
 
-/** 应用一个皮肤：token 覆盖（CSSOM）+ css（<style> 注入）+ 背景（body）。 */
+/** Apply a skin: token overrides (CSSOM) + css (<style> injection) + background (body). */
 export function applySkin(skin: UserSkin): void {
   const doc = document.documentElement;
   const r = doc.style;
-  // 1) token 覆盖：只 set 皮肤有的键（缺省回落内置主题已 set 的值）
+  // 1) token overrides: only set the keys the skin has (the rest fall back to the values the built-in theme already set)
   if (skin.tokens) {
     for (const [k, v] of Object.entries(skin.tokens)) {
       const varName = TK_MAP[k as TokenKey];
       if (varName) r.setProperty(varName, v);
     }
   }
-  // 2) theme.css：动态 <style> 注入（整体替换）
+  // 2) theme.css: dynamic <style> injection (replaced as a whole)
   let styleEl = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (skin.css) {
     if (!styleEl) {
@@ -224,7 +224,7 @@ export function applySkin(skin: UserSkin): void {
   } else if (styleEl) {
     styleEl.remove();
   }
-  // 3) 背景
+  // 3) Background
   const body = document.body;
   if (skin.bg) {
     const pos = skin.bgFocus ? `${skin.bgFocus.x} ${skin.bgFocus.y}` : '50% 0%';
@@ -241,7 +241,7 @@ export function applySkin(skin: UserSkin): void {
   doc.dataset.skin = skin.id;
 }
 
-/** 一键还原：移除皮肤注入（token 由内置主题重新 set 覆盖，见 ThemeProvider 协调）。 */
+/** One-click restore: remove the skin injection (tokens are re-set by the built-in theme, coordinated by ThemeProvider). */
 export function clearSkin(): void {
   const styleEl = document.getElementById(STYLE_ID);
   if (styleEl) styleEl.remove();
@@ -253,7 +253,7 @@ export function clearSkin(): void {
   delete document.documentElement.dataset.skin;
 }
 
-// ---------- 皮肤表管理 ----------
+// ---------- Skin table management ----------
 
 export function saveSkin(skin: UserSkin): void {
   const skins = loadSkins();

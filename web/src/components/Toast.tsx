@@ -1,4 +1,4 @@
-// 职责：Toast 容器 —— 顶部居中非阻塞通知（3s 自动消失，原型 .toast 行为）。
+// Responsibility: Toast container —— non-blocking notifications centered at the top (disappear after 3s, the prototype's .toast behavior).
 import { useUi } from '../store/ui';
 
 export function Toasts() {

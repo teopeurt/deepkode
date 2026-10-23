@@ -1,9 +1,9 @@
-// [helmsman] 持久化插件：SQLite 元数据（v1 storage.ts 搬迁）+ 启动投影重建（v1 recovery.ts 搬迁）。
-// 职责：
-//   1. 持有 Storage（better-sqlite3）：项目/卡/执行快照/设置/KB/指标/审批/Profile/策略 落盘
-//   2. 启动时从 JSONL 会话日志重放（recoverStore）重建投影 → 注入 helmsmanBoard
-//   3. 提供服务 helmsmanStorage：给 helmsman-api/kb/approval 等插件读写持久化
-// DB 路径：HELMSMAN_DB env 或 dsh/.helmsman.db（引擎进程内）。
+// [helmsman] Persistence plugin: SQLite metadata (ported from v1 storage.ts) + projection rebuild at startup (ported from v1 recovery.ts).
+// Responsibilities:
+//   1. Own the Storage (better-sqlite3): persist projects/cards/execution snapshots/settings/KB/metrics/approvals/profiles/policies
+//   2. At startup, replay the JSONL session logs (recoverStore) to rebuild the projection → inject it into helmsmanBoard
+//   3. Provide the helmsmanStorage service: lets helmsman-api/kb/approval and other plugins read/write persisted data
+// DB path: the HELMSMAN_DB env var or dsh/.helmsman.db (inside the engine process).
 import { readdirSync, openSync, readSync, closeSync, statSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 import { execSync } from 'node:child_process'
@@ -25,16 +25,16 @@ export function apply(ctx) {
   const sessionsRoot = process.env.HELMSMAN_SESSIONS_ROOT ?? resolve(process.cwd(), '.sessions')
   const storage = new Storage(dbPath)
   const board = ctx.get('helmsmanBoard')
-  console.log(`[helmsman-persist] SQLite 就绪：${dbPath}`)
+  console.log(`[helmsman-persist] SQLite ready: ${dbPath}`)
 
-  // ---------- 启动重建投影（v1 recovery.ts 语义） ----------
+  // ---------- Rebuild the projection at startup (v1 recovery.ts semantics) ----------
   const proj = newProjection()
 
-  // 从 SQLite 加载项目 → 建投影
+  // Load projects from SQLite → build the projection
   for (const p of storage.loadProjects()) {
     ensureProject(proj, p.id, p.name, p.path)
   }
-  // 从 SQLite 加载卡 → 建卡
+  // Load cards from SQLite → create the cards
   for (const c of storage.loadAllCards()) {
     ensureCard(proj, c.project_id, {
       id: c.id,
@@ -48,7 +48,7 @@ export function apply(ctx) {
       created_at: c.created_at,
     })
   }
-  // 执行 → session→卡 映射（重启恢复的权威映射）
+  // Executions → session→card mapping (the authoritative mapping for restart recovery)
   const cardOfSession = new Map()
   for (const e of storage.loadAllExecutions()) {
     const card = storage.getCard(e.card_id)
@@ -59,17 +59,17 @@ export function apply(ctx) {
     })
   }
 
-  // 重放 JSONL 会话日志重建投影（中断的 Running → Failed 等语义与 v1 一致）
+  // Replay the JSONL session logs to rebuild the projection (semantics such as interrupted Running → Failed match v1)
   let restored = 0
   try {
     const result = recoverStore(sessionsRoot, proj, null, cardOfSession)
     restored = result.restored
   } catch (e) {
-    console.warn(`[helmsman-persist] 启动重放失败（忽略，继续）:`, e?.message ?? e)
+    console.warn(`[helmsman-persist] startup replay failed (ignored, continuing):`, e?.message ?? e)
   }
 
-  // 简单会话恢复（对齐 v1 index.ts 275-290）：chat_sessions 标记的会话
-  // 从隐式卡挪到项目 chats（独立会话不进看板），并修正投影映射。
+  // Restore simple chats (matches v1 index.ts 275-290): sessions flagged in chat_sessions
+  // are moved from implicit cards into the project's chats (standalone chats stay off the board), and the projection mapping is fixed up.
   for (const pid of Object.keys(proj.projects)) {
     const p0 = proj.projects[pid]
     for (const sid of storage.listChats(pid)) {
@@ -81,7 +81,7 @@ export function apply(ctx) {
         if (card) {
           delete card.executions[sid]
           card.exec_order = card.exec_order.filter((x) => x !== sid)
-          // chat 会话的隐式卡（execs 空 = 仅承载此会话）无条件清掉
+          // The implicit card of a chat session (empty execs = it only hosted this session) is removed unconditionally
           if (card.exec_order.length === 0) delete p0.cards[cardId]
         }
         p0.chats[sid] = t
@@ -90,7 +90,7 @@ export function apply(ctx) {
     }
   }
 
-  // 把恢复的投影合并进 board（含 fold 好的执行状态，不丢 Done/Running 等）
+  // Merge the recovered projection into the board (including folded execution state, so Done/Running etc. are not lost)
   for (const [id, p] of Object.entries(proj.projects)) {
     board.ensureProject(id, p.name, p.path)
     for (const [cid, c] of Object.entries(p.cards)) {
@@ -104,7 +104,7 @@ export function apply(ctx) {
   for (const [sid, pid] of Object.entries(proj.sessionProject)) {
     board.registerSession(sid, pid, proj.sessionCard[sid] ?? '')
   }
-  // 复制折叠好的 TaskState 状态（board 的 registerSession 只建空壳，这里覆盖为恢复值）
+  // Copy the folded TaskState (the board's registerSession only creates an empty shell; overwrite it with the recovered values here)
   const boardProj = board.projection
   for (const [sid, pid] of Object.entries(proj.sessionProject)) {
     const cardId = proj.sessionCard[sid]
@@ -126,20 +126,20 @@ export function apply(ctx) {
     }
     if (dstTask) Object.assign(dstTask, srcTask)
   }
-  console.log(`[helmsman-persist] 投影重建完成：${Object.keys(proj.projects).length} 项目，${restored} 会话重放`)
+  console.log(`[helmsman-persist] projection rebuilt: ${Object.keys(proj.projects).length} projects, ${restored} sessions replayed`)
 
-  // 提供服务：给 helmsman-api/kb/approval 等插件读写持久化
+  // Provide the service: lets helmsman-api/kb/approval and other plugins read/write persisted data
   ctx.provide('helmsmanStorage', {
     get storage() { return storage },
   })
 
-  // 注意：新会话的元数据落盘由各业务插件负责（api 建项目/卡时 upsert，board fold 后 upsert 执行快照）
-  console.log('[helmsman-persist] 持久化服务已提供：helmsmanStorage')
+  // Note: persisting metadata for new sessions is each business plugin's job (api upserts when creating projects/cards; board upserts execution snapshots after folding)
+  console.log('[helmsman-persist] persistence service provided: helmsmanStorage')
 }
 
-// ---------- v1 recovery.ts 的 recoverStore 迁移（TS→JS） ----------
+// ---------- Migration of recoverStore from v1 recovery.ts (TS→JS) ----------
 
-/** 重放 .sessions/ 重建投影。返回恢复会话数。 */
+/** Replay .sessions/ to rebuild the projection. Returns the number of recovered sessions. */
 function recoverStore(root, proj, defaultProject, cardOfSession) {
   const eventsBySid = new Map()
   const regs = []
@@ -181,14 +181,14 @@ function recoverStore(root, proj, defaultProject, cardOfSession) {
     restored += 1
   }
 
-  // 有执行记录但本次无日志的会话：卡仍进看板，执行以 Pending 占位。
+  // Sessions that have an execution record but no log this time: the card still goes on the board, with the execution as a Pending placeholder.
   for (const [sid, rc] of cardOfSession) {
     if (!eventsBySid.has(sid)) {
       regs.push({ sid, projectId: rc.projectId, cardId: rc.meta.id, createdAt: rc.executionCreatedAt })
     }
   }
 
-  // 按（卡, 创建时间）排序 → 注册顺序 = 执行代次顺序（确定性）。
+  // Sort by (card, creation time) → registration order = execution generation order (deterministic).
   regs.sort((a, b) => (a.cardId === b.cardId ? a.createdAt - b.createdAt : a.cardId < b.cardId ? -1 : 1))
   for (const r of regs) {
     const rc = cardOfSession.get(r.sid)
@@ -204,8 +204,8 @@ function recoverStore(root, proj, defaultProject, cardOfSession) {
     }
   }
 
-  // 折叠事件（foldSession 已对齐官方：文本只从 assistant/message 提取，
-  // chunk/text-chunks 为中间态不累积，实时与重放同一路径）。
+  // Fold the events (foldSession matches the official behavior: text is only taken from assistant/message,
+  // chunk/text-chunks are intermediate states and not accumulated; live and replay take the same path).
   for (const [sid, events] of eventsBySid) {
     for (const ev of events) foldSession(proj, sid, ev)
     const cardId = proj.sessionCard[sid]
@@ -217,7 +217,7 @@ function recoverStore(root, proj, defaultProject, cardOfSession) {
       if (implicitCards.has(cardId) && !card.title) {
         card.title = t.title ?? sid
       }
-      // 中断检测：恢复后仍 Running → 上次进程被中断；标记 Failed
+      // Interruption detection: still Running after recovery → the previous process was interrupted; mark as Failed
       if (t.status === 'Running') {
         const lastEvent = events[events.length - 1]
         const lastTime = lastEvent && typeof lastEvent.time === 'number'
@@ -232,7 +232,7 @@ function recoverStore(root, proj, defaultProject, cardOfSession) {
   return { restored, offsets: new Map() }
 }
 
-/** 会话 cwd → 项目 id（隔离区收回到仓库根，再匹配已有项目 / 种子项目）。 */
+/** Session cwd → project id (an isolation area is mapped back to the repo root, then matched against known projects / the seed project). */
 function projectIdForSessionCwd(cwd, sessionId, known, defaultProject) {
   const root = repoRootFromCwd(cwd)
   if (defaultProject && root && root === defaultProject[1].replace(/\/+$/, '')) return defaultProject[0]
@@ -249,7 +249,7 @@ function projectIdForSessionCwd(cwd, sessionId, known, defaultProject) {
   return basename(root) || sessionId
 }
 
-/** 读一个 session.jsonl：header + 事件列表。 */
+/** Read one session.jsonl: header + event list. */
 function readLog(file) {
   const events = []
   let headerCwd, headerId, headerCreated
@@ -275,10 +275,10 @@ function readLog(file) {
           }
           if (v.seq === undefined && v.seq0 === undefined) continue
           events.push(v)
-        } catch { /* 坏行跳过 */ }
+        } catch { /* skip bad lines */ }
       }
     } finally { closeSync(fd) }
-  } catch { /* 文件不可读 → 空 */ }
+  } catch { /* unreadable file → empty */ }
   return { headerCwd, headerId, headerCreated, events }
 }
 
@@ -300,7 +300,7 @@ function walk(dir) {
   return out
 }
 
-/** 从 worktree 路径收回到 git 仓库根。 */
+/** Map a worktree path back to the git repository root. */
 function repoRootFromCwd(cwd) {
   try {
     return execSync('git rev-parse --show-toplevel', { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -309,7 +309,7 @@ function repoRootFromCwd(cwd) {
   }
 }
 
-/** worktree 路径识别（.helmsman/worktrees/ 下）。 */
+/** Worktree path detection (under .helmsman/worktrees/). */
 function isTaskWorktreePath(p) {
   return typeof p === 'string' && p.includes('.helmsman') && p.includes('worktrees')
 }

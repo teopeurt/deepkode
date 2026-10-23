@@ -1,5 +1,5 @@
-# [helmsman] 知识提炼预设：无工具纯文本会话 —— 只读输入，产出结构化知识条目 JSON。
-# 用于任务 Done 后的沉淀提炼（独立会话，主对话零污染）。绝不给工具，防提炼会话改动工作区。
+# [helmsman] Knowledge-distillation preset: tool-less, text-only session —— reads the input only and produces a structured knowledge-entry JSON.
+# Used for distillation after a task is Done (separate session, zero pollution of the main conversation). Never given tools, so the distillation session cannot modify the workspace.
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:

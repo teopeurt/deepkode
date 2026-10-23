@@ -1,13 +1,13 @@
-// 职责：微调卡（Beautiful UI「Fine-tune Card」移植，MIT © Shane Levine）——
-//   对当前主题的微调：圆角 / 氛围透明度。全部写入 ThemeStore（localStorage），不是假滑杆。
-//   主题选择已并入 ThemePicker 网格（内置 + 导入统一列表），此处不再重复"类型"下拉。
+// Responsibility: fine-tune card (port of Beautiful UI's "Fine-tune Card", MIT © Shane Levine) ——
+//   tweaks to the current theme: corner radius / atmosphere opacity. Everything is written to the ThemeStore (localStorage) —— not fake sliders.
+//   Theme selection has been merged into the ThemePicker grid (built-in + imported in one list), so the "type" dropdown is no longer repeated here.
 import { useThemeStore, type AtmoLevel } from '../theme/ThemeProvider';
 
 const ATMO: { v: AtmoLevel; n: number; label: string }[] = [
-  { v: 'off', n: 0, label: '关' },
-  { v: 'soft', n: 33, label: '淡' },
-  { v: 'on', n: 66, label: '标准' },
-  { v: 'strong', n: 100, label: '浓' },
+  { v: 'off', n: 0, label: 'Off' },
+  { v: 'soft', n: 33, label: 'Soft' },
+  { v: 'on', n: 66, label: 'Standard' },
+  { v: 'strong', n: 100, label: 'Strong' },
 ];
 
 function atmoOf(n: number): AtmoLevel {
@@ -27,31 +27,31 @@ export function FineTuneCard() {
   return (
     <div className="ftune">
       <div className="ftune-head">
-        <span className="ftune-title">微调当前主题</span>
-        <span className="ftune-adj">圆角 · 氛围</span>
+        <span className="ftune-title">Fine-tune the current theme</span>
+        <span className="ftune-adj">Radius · atmosphere</span>
       </div>
       <div className="ftune-body">
         <div className="ftune-row">
-          <span className="ftune-k">圆角</span>
+          <span className="ftune-k">Radius</span>
           <input
             type="range"
             min={4}
             max={16}
             value={radius}
-            aria-label="圆角"
+            aria-label="Corner radius"
             onChange={(e) => setRadius(Number(e.target.value))}
           />
           <span className="ftune-n">{radius}</span>
         </div>
         <div className="ftune-row">
-          <span className="ftune-k">氛围</span>
+          <span className="ftune-k">Atmosphere</span>
           <input
             type="range"
             min={0}
             max={100}
             step={1}
             value={atmoN}
-            aria-label="氛围强度"
+            aria-label="Atmosphere intensity"
             onChange={(e) => setAtmo(atmoOf(Number(e.target.value)))}
           />
           <span className="ftune-n">{ATMO.find((x) => x.v === atmo)?.label}</span>

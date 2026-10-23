@@ -1,7 +1,7 @@
-// 职责：轨迹会话视图（dsh ui-trajectory 机制参考，不抄代码）——
-//   虚拟化窗口（只渲染可见行+缓冲，200+ 条流畅）、滚动锚定（默认跟尾部，上滚暂停跟随）、
-//   流式尾部隔离（Running 时新活动只在尾部追加）、回合分组 + 工具 call/result 合并。
-// 数据模型沿用 drawer 的 toRows（活动 → 行），交互机制按 dsh 设计重做。
+// Responsibility: trajectory session view (modeled on the dsh ui-trajectory mechanism, no code copied) ——
+//   virtualized window (only visible rows + a buffer are rendered, smooth with 200+ rows), scroll anchoring (follows the tail by default, scrolling up pauses following),
+//   streaming-tail isolation (while Running, new activities are only appended at the tail), turn grouping + tool call/result merging.
+// The data model reuses the drawer's toRows (activities → rows); the interaction mechanics are redone after the dsh design.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Activity, TaskState } from '../store/projection';
 import { useProjection, estCost, cacheHitOf } from '../store/projection';
@@ -18,7 +18,7 @@ export interface TrajRow {
   ms?: number;
 }
 
-/** 活动 → 轨迹行（合并 ToolStart/ToolResult；带 at/turn 供分组与耗时） */
+/** Activities → trajectory rows (merges ToolStart/ToolResult; carries at/turn for grouping and durations) */
 export function toRows(t: TaskState): TrajRow[] {
   const toolById: Record<string, { args: string }> = {};
   (t.tool_calls || []).forEach((tc) => { toolById[tc.call_id] = tc; });
@@ -50,15 +50,15 @@ export function toRows(t: TaskState): TrajRow[] {
   return rows;
 }
 
-// ---------- 虚拟化参数 ----------
-const ROW_H = 32;        // 估算行高（px）
-const BUFFER = 10;       // 窗口上下缓冲行数
-const OVERSCAN = 60;     // 触底加载更多（px）
+// ---------- Virtualization parameters ----------
+const ROW_H = 32;        // estimated row height (px)
+const BUFFER = 10;       // buffer rows above/below the window
+const OVERSCAN = 60;     // distance from the bottom that counts as "at the bottom" (px)
 
 interface Props {
   task: TaskState;
   stream?: string;
-  /** 历史 usage 回填（metrics 表，WS 实时 usage 无值时显示成本/预算） */
+  /** Historical usage backfill (metrics table; shows cost/budget when there is no live WS usage) */
   usageOverride?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; reasoningTokens: number };
 }
 
@@ -70,18 +70,18 @@ export function TrajectoryView({ task, stream, usageOverride }: Props) {
   const hit = cacheHitOf(execUsage);
   const rows = useMemo(() => toRows(task), [task]);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // 锚定状态：'tail' = 跟随尾部；'paused' = 用户上滚暂停跟随
+  // Anchoring state: 'tail' = follow the tail; 'paused' = the user scrolled up, following paused
   const [follow, setFollow] = useState<'tail' | 'paused'>('tail');
-  // 可见窗口 [start, end)
+  // Visible window [start, end)
   const [range, setRange] = useState<[number, number]>([0, 40]);
   const total = rows.length + (stream ? 1 : 0);
 
   const running = task.status === 'Running' || (task.waiting !== null && task.waiting !== undefined);
 
-  // 滚动容器高度：自适应填满父容器（.traj-scroll height:100%），不再硬编码 320px
-  // （硬编码导致轨迹只占一半、下方留白）
+  // Scroll container height: adapts to fill the parent (.traj-scroll height:100%), no longer hard-coded to 320px
+  // (hard-coding it made the trajectory take only half the space, leaving blank space below)
 
-  // 滚动处理：判断是否在底部（锚定尾部）还是用户上滚（暂停跟随）
+  // Scroll handling: decide whether we are at the bottom (anchor to tail) or the user scrolled up (pause following)
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -91,19 +91,19 @@ export function TrajectoryView({ task, stream, usageOverride }: Props) {
     } else {
       setFollow('paused');
     }
-    // 计算可见窗口
+    // Compute the visible window
     const firstVisible = Math.max(0, Math.floor(el.scrollTop / ROW_H) - BUFFER);
     const visibleCount = Math.ceil(el.clientHeight / ROW_H) + BUFFER * 2;
     setRange([firstVisible, Math.min(total, firstVisible + visibleCount)]);
   };
 
-  // 流式/数据变化：若在跟随尾部，滚到底；若暂停，保持位置（不打断检查）
+  // Streaming/data changes: if following the tail, scroll to the bottom; if paused, keep the position (don't interrupt inspection)
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     if (follow === 'tail') {
       el.scrollTop = el.scrollHeight;
-      // 同步窗口到底部
+      // Sync the window to the bottom
       const last = Math.max(0, Math.ceil(el.scrollHeight / ROW_H) - 1);
       const visibleCount = Math.ceil(el.clientHeight / ROW_H) + BUFFER * 2;
       setRange([Math.max(0, last - visibleCount), Math.min(total, last + BUFFER)]);
@@ -111,7 +111,7 @@ export function TrajectoryView({ task, stream, usageOverride }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [total, follow]);
 
-  // 首次挂载锚定尾部
+  // Anchor to the tail on first mount
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -125,7 +125,7 @@ export function TrajectoryView({ task, stream, usageOverride }: Props) {
     return '+' + (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms');
   };
 
-  // 按回合分组（只对窗口内的行分组，保持结构）
+  // Group by turn (only the rows inside the window are grouped, keeping the structure)
   const groups = useMemo(() => {
     const [start, end] = range;
     const out: { turn: number; rows: TrajRow[] }[] = [];
@@ -145,20 +145,20 @@ export function TrajectoryView({ task, stream, usageOverride }: Props) {
     <div className="traj-wrap">
       <div className="traj-scroll" ref={scrollRef} onScroll={onScroll} style={{ overflowY: 'auto' }}>
       <div className="sess-meta">
-        <span className="kv">模型 <b>{task.model || '-'}</b></span>
-        <span className="kv">回合 <b>{task.turns ?? 0}</b></span>
-        <span className="kv">步骤 <b>{task.steps ?? 0}</b></span>
+        <span className="kv">Model <b>{task.model || '-'}</b></span>
+        <span className="kv">Turns <b>{task.turns ?? 0}</b></span>
+        <span className="kv">Steps <b>{task.steps ?? 0}</b></span>
         <span className="kv">seq <b>{task.last_seq ?? 0}</b></span>
-        {follow === 'paused' ? <span className="traj-follow-hint" title="点击回到最新">⏸ 已暂停跟随 · 滚到底部恢复</span> : null}
+        {follow === 'paused' ? <span className="traj-follow-hint" title="Click to jump to the latest">⏸ Following paused · scroll to the bottom to resume</span> : null}
       </div>
 
-      {groups.length === 0 && !stream && <div className="ph-empty">暂无轨迹（引擎执行中或未开始）</div>}
+      {groups.length === 0 && !stream && <div className="ph-empty">No trajectory yet (the engine is running or has not started)</div>}
 
-      {/* 虚拟化：顶部占位 + 可见行 + 底部占位 */}
+      {/* Virtualization: top spacer + visible rows + bottom spacer */}
       {topPad > 0 ? <div style={{ height: topPad }} /> : null}
       {groups.map((g) => (
         <div key={g.turn} className="traj-group">
-          <div className="traj-group-head">回合 {g.turn || 1}</div>
+          <div className="traj-group-head">Turn {g.turn || 1}</div>
           {g.rows.map((r) => renderRow(r, offset(r.at)))}
         </div>
       ))}
@@ -176,14 +176,14 @@ export function TrajectoryView({ task, stream, usageOverride }: Props) {
       </div>
       {execUsage ? (
         <div className="cost-block">
-          <div className="t">回合成本（本执行）</div>
+          <div className="t">Turn cost (this execution)</div>
           <div className="cost-row">
             <span>
-              输入 {execUsage.inputTokens.toLocaleString()} · 输出 {execUsage.outputTokens.toLocaleString()} · 缓存读 {execUsage.cacheReadTokens.toLocaleString()} · 思考 {execUsage.reasoningTokens.toLocaleString()}
+              Input {execUsage.inputTokens.toLocaleString()} · Output {execUsage.outputTokens.toLocaleString()} · Cache read {execUsage.cacheReadTokens.toLocaleString()} · Reasoning {execUsage.reasoningTokens.toLocaleString()}
             </span>
           </div>
-          <div className="cost-row"><span>缓存命中率（本执行）</span><b>{hit == null ? '—' : Math.round(hit * 100) + '%'}</b></div>
-          <div className="cost-row total"><span>估算</span><span>¥ {cost == null ? '—' : cost.toFixed(4)}</span></div>
+          <div className="cost-row"><span>Cache hit rate (this execution)</span><b>{hit == null ? '—' : Math.round(hit * 100) + '%'}</b></div>
+          <div className="cost-row total"><span>Estimate</span><span>¥ {cost == null ? '—' : cost.toFixed(4)}</span></div>
         </div>
       ) : null}
     </div>
@@ -197,7 +197,7 @@ function renderRow(r: TrajRow, time: string) {
         <summary className="traj-main">
           <span className="traj-dot" />
           <span className="traj-index">#{r.idx + 1}</span>
-          <span className="traj-text">{r.text?.slice(0, 60) || '思考'}</span>
+          <span className="traj-text">{r.text?.slice(0, 60) || 'Thinking'}</span>
           <span className="traj-time">{time}</span>
         </summary>
         <div className="traj-detail think">{r.text}</div>
@@ -212,7 +212,7 @@ function renderRow(r: TrajRow, time: string) {
           <span className="traj-dot" />
           <span className="traj-index">#{r.idx + 1}</span>
           <span className="traj-tool-name">{r.name}</span>
-          <span className={r.err ? 'err' : 'ok'}>{r.err ? '失败' : '成功'}</span>
+          <span className={r.err ? 'err' : 'ok'}>{r.err ? 'failed' : 'ok'}</span>
           {r.ms != null ? <span className="traj-ms">{r.ms} ms</span> : null}
           <span className="traj-time">{time}</span>
         </summary>
@@ -220,7 +220,7 @@ function renderRow(r: TrajRow, time: string) {
       </details>
     );
   }
-  const errCls = (r.text || '').indexOf('失败') === 0 ? ' err' : '';
+  const errCls = (r.text || '').indexOf('Failed') === 0 ? ' err' : '';
   return (
     <div key={r.idx} className="traj-row" data-kind="text">
       <span className="traj-dot" />

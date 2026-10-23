@@ -1,6 +1,6 @@
-// 职责：任务行（Beautiful UI「Task Rows」移植，MIT © Shane Levine）——
-//   live 状态行：状态图标（完成=勾 / 运行=旋转进度环+数字 / 失败=叉）+ 标题 + 副信息 + 状态 pill + 展开明细。
-//   行头点击：有 detail 则展开/收起；无 detail 则触发 onClick（如打开详情抽屉）。
+// Responsibility: task rows (port of Beautiful UI's "Task Rows", MIT © Shane Levine) ——
+//   live status rows: status icon (done = check / running = spinning progress ring + number / failed = cross) + title + secondary info + status pill + expandable details.
+//   Clicking the row header: expands/collapses if there are details; otherwise triggers onClick (e.g. opens the detail drawer).
 import { useState } from 'react';
 
 export type TaskRowStatus = 'running' | 'failed' | 'completed';
@@ -14,19 +14,19 @@ export interface TaskRowItem {
   id: string | number;
   title: string;
   status: TaskRowStatus;
-  /** 右侧副信息（如执行次数 / 供应商数） */
+  /** Secondary info on the right (e.g. execution count / vendor count) */
   meta?: string;
-  /** 状态 pill 文案；缺省按 status 给（运行中 / 失败 / 完成） */
+  /** Status pill text; defaults by status (Running / Failed / Done) */
   pill?: string;
-  /** 运行环中央数字（如已用步骤数） */
+  /** Number in the center of the running ring (e.g. steps used) */
   progress?: number;
-  /** 展开明细（行头点击 = 展开/收起） */
+  /** Expandable details (clicking the row header = expand/collapse) */
   detail?: TaskRowDetail[];
   onClick?: () => void;
 }
 
 const PILL_CLS: Record<TaskRowStatus, string> = { running: 'Running', failed: 'Failed', completed: 'Done' };
-const PILL_LABEL: Record<TaskRowStatus, string> = { running: '运行中', failed: '失败', completed: '完成' };
+const PILL_LABEL: Record<TaskRowStatus, string> = { running: 'Running', failed: 'Failed', completed: 'Done' };
 
 function StatusIcon({ status, progress }: { status: TaskRowStatus; progress?: number }) {
   if (status === 'completed') {

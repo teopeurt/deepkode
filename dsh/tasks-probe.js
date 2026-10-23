@@ -1,11 +1,11 @@
-// [helmsman] 实验：引擎进程内直接编排 agent（零 ACP 补丁）。
-// 验证链路：
-//   1. ctx.agents.create({ sessionId, meta:{cwd}, agentOptions, setup }) —— 引擎内建任务会话
-//   2. handle.agent.followup(createUserMessage(...)) —— 直接驱动，不走 ACP session/prompt
-//   3. 从 agent.session.events 读 session/event（assistant/message）拿结果 —— 观察通道即日志
-//   4. handle.dispose() 销毁
-//   5. ctx.agents.resume({ resumeSessionId }) —— 原生恢复持久化会话，继续对话
-// 全部走引擎原生 API，证明 server-ts 的编排逻辑可以搬进引擎进程。
+// [helmsman] Experiment: orchestrate agents directly inside the engine process (zero ACP patches).
+// Validated chain:
+//   1. ctx.agents.create({ sessionId, meta:{cwd}, agentOptions, setup }) —— create a task session inside the engine
+//   2. handle.agent.followup(createUserMessage(...)) —— drive it directly, not through ACP session/prompt
+//   3. read session/event (assistant/message) from agent.session.events to get the result —— the observation channel is the log
+//   4. handle.dispose() to destroy it
+//   5. ctx.agents.resume({ resumeSessionId }) —— natively resume the persisted session and continue the conversation
+// Everything uses native engine APIs, proving server-ts's orchestration logic can move into the engine process.
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -14,7 +14,7 @@ export const name = 'helmsman-tasks-probe'
 export const inject = ['agents', 'sessions']
 
 export function apply(ctx) {
-  // 与 headless 同款：等 loader 完成（scoped tools / adapters 装配完）再建 agent
+  // Same as headless: wait for the loader to finish (scoped tools / adapters assembled) before creating the agent
   ctx.get('loader')?.await().then(async () => {
     try {
       await runProbe(ctx)
@@ -22,7 +22,7 @@ export function apply(ctx) {
       console.error('[tasks-probe] FAILED:', err?.message ?? err)
       process.exitCode = 1
     } finally {
-      // 实验收尾：引擎进程优雅退出（不依赖 ACP 的 stdin EOF）
+      // End of the experiment: the engine process exits gracefully (without relying on ACP's stdin EOF)
       process.exit()
     }
   })
@@ -35,36 +35,36 @@ async function runProbe(ctx) {
   const cwd = process.env.HELMSMAN_WORKSPACE ?? process.cwd()
   console.log(`[tasks-probe] create agent session=${sid} cwd=${cwd}`)
 
-  // 1. 引擎内建任务会话（等价 server-ts 的"新建任务"）
+  // 1. Create a task session inside the engine (equivalent to server-ts's "new task")
   const { agent, dispose } = await agents.create({
     sessionId: sid,
     meta: { cwd },
     agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
     setup: (agentCtx) => {
-      // 任务级装配接点：preset mount / model selection 都在这（官方扩展点）
-      console.log('[tasks-probe] setup(agentCtx) ran — 任务级工具/人格装配点')
+      // Task-level assembly hook point: preset mount / model selection both happen here (official extension point)
+      console.log('[tasks-probe] setup(agentCtx) ran — task-level tool/persona assembly point')
     },
   })
   console.log(`[tasks-probe] agent created id=${agent.id} status=${agent.status}`)
 
-  // 2. 直接驱动一轮（等价 server-ts 的"提交评论/任务指令"）
+  // 2. Drive one round directly (equivalent to server-ts's "submit comment / task instruction")
   const firstSeq = agent.session.seq
   agent.followup(createUserMessage({
-    content: [{ type: 'text', text: '用一句话回答：1+1 等于几？只输出答案。' }],
+    content: [{ type: 'text', text: 'Answer in one sentence: what is 1+1? Output only the answer.' }],
     source: { kind: 'user' },
   }))
   await agent.whenIdle()
   await sessions.flush(agent.session)
 
-  // 3. 从 session log 读结果（观察通道 —— 无需 tail JSONL，事件即日志）
+  // 3. Read the result from the session log (observation channel —— no need to tail the JSONL, the events are the log)
   const assistantText = extractAssistantText(agent.session.events, firstSeq)
   console.log(`[tasks-probe] round-1 reply: ${JSON.stringify(assistantText)}`)
 
-  // 4. 销毁（等价任务结束）
+  // 4. Dispose (equivalent to the task ending)
   await dispose()
   console.log('[tasks-probe] agent disposed')
 
-  // 5. 原生 resume：同一会话恢复，继续对话（等价 server-ts 的"恢复历史任务"）
+  // 5. Native resume: restore the same session and continue the conversation (equivalent to server-ts's "resume a historical task")
   const resumed = await agents.resume({
     resumeSessionId: sid,
     agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
@@ -72,7 +72,7 @@ async function runProbe(ctx) {
   console.log(`[tasks-probe] resumed agent id=${resumed.agent.id} status=${resumed.agent.status}`)
   const secondSeq = resumed.agent.session.seq
   resumed.agent.followup(createUserMessage({
-    content: [{ type: 'text', text: '继续：请复述你上一轮说的话。' }],
+    content: [{ type: 'text', text: 'Continue: please repeat what you said in the previous round.' }],
     source: { kind: 'user' },
   }))
   await resumed.agent.whenIdle()
@@ -81,10 +81,10 @@ async function runProbe(ctx) {
   console.log(`[tasks-probe] round-2 reply: ${JSON.stringify(resumedText)}`)
 
   await resumed.dispose()
-  console.log('[tasks-probe] OK — 引擎内建任务 + 原生 resume 链路全通')
+  console.log('[tasks-probe] OK — in-engine task creation + native resume chain fully working')
 }
 
-/** 从 session log 事件里抽取某 seq 之后的最后一条 assistant/message 文本。 */
+/** Extract the text of the last assistant/message after a given seq from the session-log events. */
 function extractAssistantText(events, afterSeq) {
   let text = ''
   for (const ev of events) {

@@ -1,6 +1,6 @@
-// 职责：项目首页 —— 状态徽章组（按卡的最新执行状态）+ 需要你处理（失败/待确认目标契约）
-// + 正在发生（运行中）+ 最近沉淀（知识库目标契约）+ 操作（新建卡/简单会话/跑全部）+ 项目设置（目标契约只读）。
-// M2.3（O1=B）：项目按卡聚合；看板卡 = 资产卡（1 卡 N 执行，状态 = 最新执行）。
+// Responsibility: project home page —— status badge group (by each card's latest execution status) + needs your attention (failed / awaiting-confirmation target contract)
+// + happening now (running) + recent captures (knowledge-base target contract) + actions (new card / simple chat / run all) + project settings (target contract, read-only).
+// M2.3 (O1=B): the project aggregates by card; a board card = an asset card (1 card N executions, status = latest execution).
 import { useEffect, useState } from 'react';
 import { useUi, writeHash } from '../store/ui';
 import {
@@ -46,7 +46,7 @@ export function ProjectHomeView({ pid }: { pid: string }) {
     writeHash(pid, view, null, 'comments');
   };
 
-  // 真实实现接入：最近沉淀（KB）/ 仓库活状态（文件树顶层）/ 待批复计数
+  // Real implementations wired in: recent captures (KB) / live repo status (top level of the file tree) / pending approval count
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -55,14 +55,14 @@ export function ProjectHomeView({ pid }: { pid: string }) {
         if (!alive) return;
         setKbRecent(notes.filter((n) => n.validUntil === null).sort((a, b) => b.validFrom - a.validFrom).slice(0, 4));
         setPendingCount(approvals.length);
-      } catch { /* 首页数据失败不阻塞 */ }
+      } catch { /* home-page data failures do not block */ }
       try {
         const r = await fetch(`/api/projects/${encodeURIComponent(pid)}/repo-status`);
         if (r.ok) {
           const rs = (await r.json()) as typeof repo;
           if (alive) setRepo(rs);
         }
-      } catch { /* 仓库状态失败忽略 */ }
+      } catch { /* repo status failures are ignored */ }
     })();
     return () => { alive = false; };
   }, [pid]);
@@ -77,7 +77,7 @@ export function ProjectHomeView({ pid }: { pid: string }) {
     <div id="projhome">
       {isPending ? (
         <div className="banner warn" style={{ marginBottom: 18 }}>
-          新项目待注册（离线兜底）：可先建第一张卡（POST /api/projects/:pid/cards），或重新打开「新建项目」显式注册。
+          New project pending registration (offline fallback): you can create the first card (POST /api/projects/:pid/cards), or reopen "New project" to register it explicitly.
         </div>
       ) : null}
       <div className="ph-head">
@@ -86,15 +86,15 @@ export function ProjectHomeView({ pid }: { pid: string }) {
         <div className="ph-status">
           {(['Running', 'Failed', 'Pending', 'Done', 'Cancelled'] as const)
             .filter((k) => counts[k] > 0)
-            .map((k) => <StatusPill key={k} status={k} label={(k === 'Running' ? '运行中 ' : k === 'Failed' ? '失败 ' : k === 'Pending' ? '待办 ' : k === 'Done' ? '完成 ' : '已取消 ') + counts[k]} />)}
-          <span style={{ color: 'var(--text3)', fontFamily: 'var(--mono)', fontSize: 11 }}>· {clist.length} 张卡</span>
+            .map((k) => <StatusPill key={k} status={k} label={(k === 'Running' ? 'Running ' : k === 'Failed' ? 'Failed ' : k === 'Pending' ? 'To do ' : k === 'Done' ? 'Done ' : 'Cancelled ') + counts[k]} />)}
+          <span style={{ color: 'var(--text3)', fontFamily: 'var(--mono)', fontSize: 11 }}>· {clist.length} cards</span>
         </div>
       </div>
 
       <div className="ph-cols">
         <div className="ph-col">
           <div className="ph-sec">
-            <div className="ph-sec-t">需要你处理</div>
+            <div className="ph-sec-t">Needs your attention</div>
             {failed.length ? (
               <TaskRows
                 items={failed.map<TaskRowItem>((c) => {
@@ -103,20 +103,20 @@ export function ProjectHomeView({ pid }: { pid: string }) {
                     id: c.id,
                     title: c.title || c.id.slice(0, 12),
                     status: 'failed',
-                    meta: `执行 ×${c.execution_count ?? Object.keys(c.executions).length}`,
+                    meta: `Executions ×${c.execution_count ?? Object.keys(c.executions).length}`,
                     detail: e && e.activities.length
-                      ? [{ label: '最后活动', value: activityText(e.activities[e.activities.length - 1]).slice(0, 60) }]
+                      ? [{ label: 'Last activity', value: activityText(e.activities[e.activities.length - 1]).slice(0, 60) }]
                       : undefined,
                     onClick: () => openDetail(pid, c.id, 'comments'),
                   };
                 })}
               />
-            ) : <div className="ph-empty">没有需要你处理的任务</div>}
-            <div className="ph-hint2">{pendingCount > 0 ? `待批复 ${pendingCount} 项 · 批复队列查看` : '没有待批复事项'}</div>
+            ) : <div className="ph-empty">No tasks need your attention</div>}
+            <div className="ph-hint2">{pendingCount > 0 ? `${pendingCount} pending approvals · see the approval queue` : 'No pending approvals'}</div>
           </div>
 
           <div className="ph-sec">
-            <div className="ph-sec-t">正在发生</div>
+            <div className="ph-sec-t">Happening now</div>
             {running.length ? (
               <TaskRows
                 items={running.map<TaskRowItem>((c) => {
@@ -131,50 +131,50 @@ export function ProjectHomeView({ pid }: { pid: string }) {
                   };
                 })}
               />
-            ) : <div className="ph-empty">没有正在执行的任务</div>}
+            ) : <div className="ph-empty">No tasks are running</div>}
           </div>
 
           <div className="ph-sec">
-            <div className="ph-sec-t">仓库</div>
+            <div className="ph-sec-t">Repository</div>
             {repo === null ? (
-              <div className="ph-empty">加载仓库状态…</div>
+              <div className="ph-empty">Loading repository status…</div>
             ) : repo.error ? (
-              <div className="ph-empty">{repo.error === 'not a git repo' ? '不是 git 仓库' : '仓库状态不可读'}</div>
+              <div className="ph-empty">{repo.error === 'not a git repo' ? 'Not a git repository' : 'Repository status unreadable'}</div>
             ) : (
               <div className="repo-status">
                 <div className="repo-row">
-                  <span className="tag">分支</span>
-                  <b className="repo-branch">{repo.branch || '（无分支）'}</b>
+                  <span className="tag">Branch</span>
+                  <b className="repo-branch">{repo.branch || '(no branch)'}</b>
                   {(repo.ahead > 0 || repo.behind > 0) ? (
-                    <span className="repo-sync" title="与远端对比">{repo.ahead > 0 ? `↑${repo.ahead}` : ''}{repo.ahead > 0 && repo.behind > 0 ? ' ' : ''}{repo.behind > 0 ? `↓${repo.behind}` : ''}</span>
+                    <span className="repo-sync" title="Compared with remote">{repo.ahead > 0 ? `↑${repo.ahead}` : ''}{repo.ahead > 0 && repo.behind > 0 ? ' ' : ''}{repo.behind > 0 ? `↓${repo.behind}` : ''}</span>
                   ) : null}
                   {repo.conflicted > 0 ? (
-                    <span className="repo-conflict">冲突 {repo.conflicted} 个</span>
+                    <span className="repo-conflict">{repo.conflicted} conflicts</span>
                   ) : repo.dirty > 0 ? (
                     <span className={'repo-dirty' + (repo.staged > 0 ? ' staged' : '')}>
-                      {repo.dirty} 个改动
-                      {repo.staged > 0 ? ` · ${repo.staged} 已暂存` : ''}
-                      {repo.untracked > 0 ? ` · ${repo.untracked} 新文件` : ''}
+                      {repo.dirty} changes
+                      {repo.staged > 0 ? ` · ${repo.staged} staged` : ''}
+                      {repo.untracked > 0 ? ` · ${repo.untracked} new files` : ''}
                     </span>
                   ) : (
-                    <span className="repo-clean">工作区干净</span>
+                    <span className="repo-clean">Working tree clean</span>
                   )}
                 </div>
                 {repo.changes.length > 0 ? (
                   <div className="repo-sec">
-                    <div className="repo-sec-t">改动</div>
+                    <div className="repo-sec-t">Changes</div>
                     {repo.changes.map((c) => (
                       <div key={c.path} className="repo-change">
                         <span className={'repo-code ' + codeCls(c.code)} title={codeLabel(c.code)}>{c.code}</span>
                         <span className="repo-path">{c.path}</span>
-                        {c.staged ? <span className="repo-staged-tag">已暂存</span> : null}
+                        {c.staged ? <span className="repo-staged-tag">staged</span> : null}
                       </div>
                     ))}
                   </div>
                 ) : null}
                 {repo.branches.length > 0 ? (
                   <div className="repo-sec">
-                    <div className="repo-sec-t">分支</div>
+                    <div className="repo-sec-t">Branches</div>
                     {repo.branches.map((b) => (
                       <div key={b.name} className={'repo-branch-item' + (b.current ? ' cur' : '')}>
                         <span className="repo-dot">{b.current ? '●' : '○'}</span>
@@ -185,7 +185,7 @@ export function ProjectHomeView({ pid }: { pid: string }) {
                 ) : null}
                 {repo.history.length > 0 ? (
                   <div className="repo-sec">
-                    <div className="repo-sec-t">提交</div>
+                    <div className="repo-sec-t">Commits</div>
                     {repo.history.map((h) => (
                       <div key={h.hash} className="repo-commit" title={h.subject}>
                         <span className="repo-hash">{h.hash}</span>
@@ -202,7 +202,7 @@ export function ProjectHomeView({ pid }: { pid: string }) {
 
         <div className="ph-col">
           <div className="ph-sec">
-            <div className="ph-sec-t">最近沉淀</div>
+            <div className="ph-sec-t">Recent captures</div>
             {kbRecent.length ? (
               <ContextCards
                 chunks={kbRecent.map<ContextChunk>((n) => ({
@@ -213,24 +213,24 @@ export function ProjectHomeView({ pid }: { pid: string }) {
                   onClick: () => goView('kb'),
                   sourceKind: n.source.kind,
                   sourceRef: n.source.ref,
-                  badges: [{ label: n.trust === 'human-approved' ? '人工确认' : n.trust === 'agent-generated' ? '自动沉淀' : '未验证', tone: n.trust === 'human-approved' ? 'ok' : n.trust === 'agent-generated' ? 'info' : 'muted' }],
+                  badges: [{ label: n.trust === 'human-approved' ? 'Human-confirmed' : n.trust === 'agent-generated' ? 'Auto-captured' : 'Unverified', tone: n.trust === 'human-approved' ? 'ok' : n.trust === 'agent-generated' ? 'info' : 'muted' }],
                 }))}
                 showHead={false}
                 empty=""
               />
-            ) : <div className="ph-empty">知识库为空 —— 任务完成后结论自动沉淀到这里</div>}
-            <div className="ph-hint2">最近沉淀的结论 · 点击进入知识库</div>
+            ) : <div className="ph-empty">The knowledge base is empty —— conclusions are captured here automatically when tasks complete</div>}
+            <div className="ph-hint2">Recently captured conclusions · click to open the knowledge base</div>
           </div>
           <div className="ph-sec">
-            <div className="ph-sec-t">操作</div>
+            <div className="ph-sec-t">Actions</div>
             <div className="ph-actions">
-              <Button onClick={() => setNewTaskOpen(true)}><Icon name="plus" size="sm" />新建卡</Button>
-              <Button onClick={() => goView('chat')}><Icon name="chat" size="sm" />简单会话</Button>
-              <Button variant="primary" onClick={() => { toast('卡创建即自动执行首代；如需新执行代次在卡详情 fork'); useProjection.getState().bump(); }}>
-                <Icon name="play" size="sm" />跑全部
+              <Button onClick={() => setNewTaskOpen(true)}><Icon name="plus" size="sm" />New card</Button>
+              <Button onClick={() => goView('chat')}><Icon name="chat" size="sm" />Simple chat</Button>
+              <Button variant="primary" onClick={() => { toast('A new card runs its first generation automatically; to start another execution generation, fork from the card detail'); useProjection.getState().bump(); }}>
+                <Icon name="play" size="sm" />Run all
               </Button>
               <Button variant="ghost" onClick={() => setRemoveOpen(true)} style={{ color: 'var(--text3)' }}>
-                移除项目
+                Remove project
               </Button>
             </div>
           </div>
@@ -239,19 +239,19 @@ export function ProjectHomeView({ pid }: { pid: string }) {
       </div>
 
       <details className="settings">
-        <summary>项目设置</summary>
-        <div className="row"><span>模型分层</span><span className="dim">auto（flash-first · 目标契约）</span></div>
-        <div className="row"><span>检索阈值</span><span className="dim">0.55（目标契约）</span></div>
-        <div className="row"><span>简报预算</span><span className="dim">8k tokens（目标契约）</span></div>
-        <div className="row"><span>并发上限</span><span className="dim">2（目标契约）</span></div>
-        <div className="row"><span>凭据</span><span className="dim">DEEPSEEK_API_KEY（env）</span></div>
-        <div className="row"><span>项目指令</span><span className="dim">AGENTS.md（目标契约）</span></div>
+        <summary>Project settings</summary>
+        <div className="row"><span>Model tiering</span><span className="dim">auto (flash-first · target contract)</span></div>
+        <div className="row"><span>Retrieval threshold</span><span className="dim">0.55 (target contract)</span></div>
+        <div className="row"><span>Brief budget</span><span className="dim">8k tokens (target contract)</span></div>
+        <div className="row"><span>Concurrency limit</span><span className="dim">2 (target contract)</span></div>
+        <div className="row"><span>Credentials</span><span className="dim">DEEPSEEK_API_KEY (env)</span></div>
+        <div className="row"><span>Project instructions</span><span className="dim">AGENTS.md (target contract)</span></div>
       </details>
     </div>
   );
 }
 
-/** 改动状态字母 → 颜色类（VSCode 源码管理配色） */
+/** Change status letter → color class (VSCode source-control colors) */
 function codeCls(code: string): string {
   if (code === 'A') return 'add'
   if (code === 'D') return 'del'
@@ -261,11 +261,11 @@ function codeCls(code: string): string {
   return ''
 }
 function codeLabel(code: string): string {
-  const m: Record<string, string> = { M: '修改', A: '新增', D: '删除', R: '重命名', C: '复制', '?': '未跟踪', U: '冲突' }
+  const m: Record<string, string> = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C: 'Copied', '?': 'Untracked', U: 'Conflict' }
   return m[code] ?? code
 }
 
-// 抽屉打开（跨视图复用；openId = 卡 id，抽屉内选执行代次）
+// Open the drawer (reused across views; openId = card id, the execution generation is chosen inside the drawer)
 function openDetail(pid: string, cardId: string, tab: 'comments' | 'brief' | 'artifact' | 'trajectory') {
   useUi.getState().setRoute({ pid, openId: cardId, tab });
   writeHash(pid, useUi.getState().view, cardId, tab);

@@ -1,4 +1,4 @@
-// 职责：内联 SVG 图标集 —— 从 taskboard-v9.html 原样移植（stroke 风格，1.6 线宽，随 currentColor）。
+// Responsibility: inline SVG icon set —— ported as-is from taskboard-v9.html (stroke style, 1.6 line width, follows currentColor).
 export type IconName =
   | 'app' | 'folder' | 'board' | 'graph' | 'chat' | 'kb' | 'play' | 'plus' | 'refresh'
   | 'search' | 'warn' | 'home' | 'side' | 'gear' | 'check' | 'lock' | 'doc' | 'x';

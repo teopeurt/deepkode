@@ -1,4 +1,4 @@
-// 职责：ESLint 基础配置（React + TS + hooks 规则）。
+// Responsibility: base ESLint config (React + TS + hooks rules).
 module.exports = {
   root: true,
   env: { browser: true, es2020: true },

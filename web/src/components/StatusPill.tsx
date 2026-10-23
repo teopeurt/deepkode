@@ -1,15 +1,15 @@
-// 职责：状态 pill（粉彩底 + 深色字，圆点 + 文字）—— 语义色只表达状态。
+// Responsibility: status pill (pastel background + dark text, dot + label) —— semantic colors only express status.
 import type { TaskStatus } from '../store/projection';
 
 export type PillStatus = TaskStatus | 'Waiting';
 
 export const ST_LABEL: Record<PillStatus, string> = {
-  Pending: '待办',
-  Running: '运行中',
-  Waiting: '待批复',
-  Done: '完成',
-  Failed: '失败',
-  Cancelled: '已取消',
+  Pending: 'To do',
+  Running: 'Running',
+  Waiting: 'Awaiting approval',
+  Done: 'Done',
+  Failed: 'Failed',
+  Cancelled: 'Cancelled',
 };
 
 export function StatusPill({ status, label }: { status: PillStatus; label?: string }) {

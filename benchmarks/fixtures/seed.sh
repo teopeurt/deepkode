@@ -1,8 +1,8 @@
 #!/bin/bash
-# 生成实验项目 fixture：源码 + 数据文件（供长任务操作）
+# Generate the experiment project fixture: source code + data files (for the long tasks to operate on)
 WS="$1"
 mkdir -p "$WS/src" "$WS/data" "$WS/docs" "$WS/tests" "$WS/scripts"
-# 源码
+# Source code
 cat > "$WS/src/app.js" <<'JSEOF'
 const express = require('express')
 const app = express()
@@ -18,7 +18,7 @@ module.exports = {
   format: (v) => `value=${v}`,
 }
 JSEOF
-# 脚本
+# Scripts
 cat > "$WS/scripts/build.sh" <<'SHEOF'
 #!/bin/bash
 echo "building..."
@@ -33,7 +33,7 @@ echo "running checks..."
 echo "deployed"
 SHEOF
 chmod +x "$WS/scripts/deploy.sh"
-# 数据
+# Data
 for i in 1 2 3 4 5; do
   echo "record-$i,value-$i,category-$(expr $i % 2)" > "$WS/data/item-$i.csv"
 done
@@ -44,7 +44,7 @@ cat > "$WS/data/items.json" <<'JEOF'
   { "id": 3, "name": "gamma", "price": 30 }
 ]
 JEOF
-# 配置
+# Config
 cat > "$WS/package.json" <<'PEOF'
 {
   "name": "fixture-app",

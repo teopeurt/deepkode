@@ -1,12 +1,12 @@
-// 职责：记录表（Beautiful UI「Records Table」移植，MIT © Shane Levine）——
-//   CRM 式网格：可排序列 + 标签 + 选中行。纯展示，排序在组件内，行点击上抛。
+// Responsibility: records table (port of Beautiful UI's "Records Table", MIT © Shane Levine) ——
+//   CRM-style grid: sortable columns + tags + selected row. Display only; sorting lives in the component, row clicks are passed up.
 import { useMemo, useState, type ReactNode } from 'react';
 
 export interface RecordsCol<T> {
   key: string;
   label: string;
   width?: string;
-  /** 提供则可点表头排序 */
+  /** If provided, the column header can be clicked to sort */
   sort?: (a: T, b: T) => number;
   cell: (row: T) => ReactNode;
 }
@@ -63,7 +63,7 @@ export function RecordsTable<T>({ columns, rows, rowKey, selectedKey, onRow, foo
         <tbody>
           {shown.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} className="rtable-empty">{empty ?? '无记录'}</td>
+              <td colSpan={columns.length} className="rtable-empty">{empty ?? 'No records'}</td>
             </tr>
           ) : shown.map((row) => {
             const id = rowKey(row);

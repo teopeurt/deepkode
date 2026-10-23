@@ -1,14 +1,14 @@
-// 职责：Vite 配置 —— dev proxy 把 /api 与 /api/events 代理到 Rust 服务（服务无 CORS 头，必须同源代理）。
+// Responsibility: Vite config —— the dev proxy forwards /api and /api/events to the backend service (it sends no CORS headers, so a same-origin proxy is required).
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: '0.0.0.0', // localhost(::1) 与 127.0.0.1 均可访问
+    host: '0.0.0.0', // reachable via both localhost(::1) and 127.0.0.1
     port: 5173,
     proxy: {
-      // REST + WS（/api/events）统一代理到 helmsman 产品服务；ws:true 让 /api/events 走 WebSocket 升级。
+      // REST + WS (/api/events) are all proxied to the helmsman service; ws:true lets /api/events go through the WebSocket upgrade.
       '/api': {
         target: 'http://127.0.0.1:3081',
         changeOrigin: true,

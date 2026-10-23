@@ -1,4 +1,4 @@
-# [helmsman] 精简编码预设：最小工具集 + 简洁人设 —— 演示每任务按 preset 组装会话。
+# [helmsman] Concise-coding preset: minimal tool set + concise persona —— demonstrates assembling each task's session from a preset.
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:

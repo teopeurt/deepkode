@@ -1,5 +1,5 @@
-// 职责：知识库 —— 记录表 + 详情（知识债务：注入未用 / 用了还失败）。
-// 记录表：Beautiful UI「Records Table」移植（MIT © Shane Levine）—— 标签 / 排序 / 关系强度。
+// Responsibility: knowledge base —— records table + detail (knowledge debt: injected but unused / used but still failed).
+// Records table: port of Beautiful UI's "Records Table" (MIT © Shane Levine) —— tags / sorting / relationship strength.
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/icons';
 import { Button } from '../components/Button';
@@ -13,28 +13,28 @@ function isPinned(n: KbNoteRow): boolean {
   return (n.tags ?? []).some((t) => t.toLowerCase() === 'stable');
 }
 
-/** 来源友好标签（表格列 + 详情用） */
+/** Friendly source labels (for the table column + detail) */
 const SOURCE_LABEL: Record<string, string> = {
-  task: '任务沉淀',
-  subagent: '子代理',
-  human: '人工录入',
-  project: '项目',
+  task: 'Task capture',
+  subagent: 'Subagent',
+  human: 'Manual entry',
+  project: 'Project',
 };
 
 const TRUST_LABEL: Record<KbNoteRow['trust'], string> = {
-  'human-approved': '人工确认',
-  'agent-generated': '自动沉淀',
-  unverified: '未验证',
+  'human-approved': 'Human-confirmed',
+  'agent-generated': 'Auto-captured',
+  unverified: 'Unverified',
 };
 
 const STRENGTH: Record<DebtStatus, { id: string; label: string }> = {
-  useful: { id: 'strong', label: '很强' },
-  idle: { id: 'weak', label: '观察中' },
-  unused: { id: 'none', label: '无引用' },
-  toxic: { id: 'toxic', label: '有害' },
+  useful: { id: 'strong', label: 'Strong' },
+  idle: { id: 'weak', label: 'Observing' },
+  unused: { id: 'none', label: 'Never cited' },
+  toxic: { id: 'toxic', label: 'Harmful' },
 };
 
-/** 强度序（排序用）：无引用 < 有害 < 观察中 < 很强 */
+/** Strength order (for sorting): never cited < harmful < observing < strong */
 const STRENGTH_ORDER: Record<DebtStatus, number> = { unused: 0, toxic: 1, idle: 2, useful: 3 };
 
 type Filter = 'valid' | 'unused' | 'toxic';
@@ -56,7 +56,7 @@ export function KnowledgeBaseView({ pid }: { pid: string }) {
     setLoading(true);
     setError(null);
     try {
-      // M4：搜索走服务端融合检索（关键词/摘要/标签命中 + 排序 + 债务降权），不做客户端子串降级
+      // M4: search uses server-side fused retrieval (keyword/summary/tag hits + ranking + debt demotion), no client-side substring fallback
       if (query && query.trim()) {
         setNotes(await searchKbNotes(pid, query.trim()));
       } else {
@@ -80,7 +80,7 @@ export function KnowledgeBaseView({ pid }: { pid: string }) {
 
   const unusedCount = notes.filter((n) => n.debt?.status === 'unused').length;
   const toxicCount = notes.filter((n) => n.debt?.status === 'toxic').length;
-  // 顶部概览统计
+  // Overview stats at the top
   const totalCount = notes.length;
   const pinnedCount = notes.filter(isPinned).length;
   const srcCounts = notes.reduce<Record<string, number>>((acc, n) => {
@@ -122,23 +122,23 @@ export function KnowledgeBaseView({ pid }: { pid: string }) {
   return (
     <div id="kbview">
       <div className="ph-head">
-        <h1>知识库</h1>
+        <h1>Knowledge base</h1>
         <div className="ph-path">
-          任务自动沉淀 · 人工录入 · 稳定前缀 · 失效审计 —— 双时态演化（version / valid_until）
+          Automatic task capture · manual entry · stable prefix · invalidation audit —— bitemporal evolution (version / valid_until)
         </div>
       </div>
       <div className="kb-bar">
         <div className="search">
           <Icon name="search" size="sm" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索知识库…" aria-label="搜索知识库" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the knowledge base…" aria-label="Search the knowledge base" />
         </div>
         <div className="filters">
-          <button className={'chip' + (filter === 'valid' ? ' active' : '')} onClick={() => setFilter('valid')}>有效</button>
-          <button className={'chip' + (filter === 'unused' ? ' active' : '')} onClick={() => setFilter('unused')}>从未引用{unusedCount ? ` ${unusedCount}` : ''}</button>
-          <button className={'chip' + (filter === 'toxic' ? ' active' : '')} onClick={() => setFilter('toxic')}>可能有毒{toxicCount ? ` ${toxicCount}` : ''}</button>
+          <button className={'chip' + (filter === 'valid' ? ' active' : '')} onClick={() => setFilter('valid')}>Valid</button>
+          <button className={'chip' + (filter === 'unused' ? ' active' : '')} onClick={() => setFilter('unused')}>Never cited{unusedCount ? ` ${unusedCount}` : ''}</button>
+          <button className={'chip' + (filter === 'toxic' ? ' active' : '')} onClick={() => setFilter('toxic')}>Possibly toxic{toxicCount ? ` ${toxicCount}` : ''}</button>
         </div>
         <div className="kb-stats">
-          <span className="kb-stat">{totalCount} 条</span>
+          <span className="kb-stat">{totalCount} entries</span>
           <span className="kb-stat">📌 {pinnedCount}</span>
           {Object.entries(srcCounts).map(([k, c]) => (
             <span key={k} className="kb-stat muted">{SOURCE_LABEL[k] ?? k} {c}</span>
@@ -148,9 +148,9 @@ export function KnowledgeBaseView({ pid }: { pid: string }) {
       <div className="kb-body">
         <div className="kb-grid">
           {error ? (
-            <div className="empty-state"><div className="t">加载失败</div><div className="d">{error}</div></div>
+            <div className="empty-state"><div className="t">Failed to load</div><div className="d">{error}</div></div>
           ) : loading && notes.length === 0 ? (
-            <div className="empty-state"><LoadingState variant="surfer" label="加载知识库…" /></div>
+            <div className="empty-state"><LoadingState variant="surfer" label="Loading knowledge base…" /></div>
           ) : (
             <RecordsTable
               rows={visible}
@@ -160,41 +160,41 @@ export function KnowledgeBaseView({ pid }: { pid: string }) {
               empty={(
                 <div className="empty-state">
                   <Icon name="kb" />
-                  <div className="t">{filter === 'valid' ? '知识库为空' : '没有这类笔记'}</div>
-                  <div className="d">{filter === 'valid' ? '任务完成时，结论会自动沉淀到这里。要点进每张卡开头，打开笔记点「钉到稳定前缀」。' : '债务要等笔记被装配过几次才出现'}</div>
+                  <div className="t">{filter === 'valid' ? 'The knowledge base is empty' : 'No notes of this kind'}</div>
+                  <div className="d">{filter === 'valid' ? 'When tasks complete, their conclusions are captured here automatically. To put something at the start of every card, open the note and click "Pin to stable prefix".' : 'Debt only shows up after a note has been assembled a few times'}</div>
                 </div>
               )}
-              footer={<>{visible.length} 条 · {unusedCount} 从未引用 · {toxicCount} 可能有毒</>}
+              footer={<>{visible.length} entries · {unusedCount} never cited · {toxicCount} possibly toxic</>}
               columns={[
                 {
                   key: 'title',
-                  label: '笔记',
+                  label: 'Note',
                   width: '28%',
                   sort: (a, b) => a.title.localeCompare(b.title, 'zh'),
                   cell: (n) => <span className="rtable-name">{n.title}</span>,
                 },
                 {
                   key: 'tags',
-                  label: '标签',
+                  label: 'Tags',
                   width: '22%',
                   cell: (n) => (
                     <span className="rtable-tags">
                       <span className={'trust trust-' + n.trust}>{TRUST_LABEL[n.trust]}</span>
-                      {isPinned(n) && <span className="trust trust-human-approved">稳定前缀</span>}
+                      {isPinned(n) && <span className="trust trust-human-approved">Stable prefix</span>}
                       {n.tags.slice(0, 3).map((t) => <span key={t} className="tag">#{t}</span>)}
                     </span>
                   ),
                 },
                 {
                   key: 'when',
-                  label: '最近',
+                  label: 'Recent',
                   width: '14%',
                   sort: (a, b) => a.validFrom - b.validFrom,
                   cell: (n) => relTime(n.validFrom),
                 },
                 {
                   key: 'str',
-                  label: '关系',
+                  label: 'Strength',
                   width: '14%',
                   sort: (a, b) => (a.debt ? STRENGTH_ORDER[a.debt.status] : 2) - (b.debt ? STRENGTH_ORDER[b.debt.status] : 2),
                   cell: (n) => {
@@ -204,7 +204,7 @@ export function KnowledgeBaseView({ pid }: { pid: string }) {
                 },
                 {
                   key: 'src',
-                  label: '来源',
+                  label: 'Source',
                   width: '22%',
                   cell: (n) => (
                     <span className="rtable-src">
@@ -223,15 +223,15 @@ export function KnowledgeBaseView({ pid }: { pid: string }) {
               <h3>{selected.title}</h3>
               <div className="note-meta">
                 <span className={'trust trust-' + selected.trust}>{TRUST_LABEL[selected.trust]}</span>
-                {isPinned(selected) && <span className="trust trust-human-approved">稳定前缀</span>}
-                <span className="muted">来源：{SOURCE_LABEL[selected.source.kind] ?? selected.source.kind} · {new Date(selected.validFrom).toLocaleString()}</span>
+                {isPinned(selected) && <span className="trust trust-human-approved">Stable prefix</span>}
+                <span className="muted">Source: {SOURCE_LABEL[selected.source.kind] ?? selected.source.kind} · {new Date(selected.validFrom).toLocaleString()}</span>
               </div>
               {selected.debt && (
                 <div className={'banner' + (selected.debt.status === 'toxic' ? ' warn' : selected.debt.status === 'unused' ? '' : ' ok')} style={{ marginTop: 12 }}>
-                  装配 {selected.debt.injected} 次 · 引用 {selected.debt.cited} 次
-                  {selected.debt.failedWhenCited > 0 ? ` · 引用后失败 ${selected.debt.failedWhenCited}` : ''}
-                  {selected.debt.status === 'unused' ? ' —— 装进去了但工具/产出没碰到它' : ''}
-                  {selected.debt.status === 'toxic' ? ' —— 用了之后任务更容易失败' : ''}
+                  Assembled {selected.debt.injected} times · cited {selected.debt.cited} times
+                  {selected.debt.failedWhenCited > 0 ? ` · failed after citing ${selected.debt.failedWhenCited}` : ''}
+                  {selected.debt.status === 'unused' ? ' —— it was injected but no tool/output ever touched it' : ''}
+                  {selected.debt.status === 'toxic' ? ' —— tasks fail more often after using it' : ''}
                 </div>
               )}
               <div className="note-content"><Markdown text={selected.content.join('\n\n')} /></div>
@@ -239,21 +239,21 @@ export function KnowledgeBaseView({ pid }: { pid: string }) {
                 <div className="note-keywords">{selected.keywords.map((k) => <span key={k} className="tag">{k}</span>)}</div>
               )}
               {selected.applicability ? (
-                <div className="note-applicability">适用：{selected.applicability}</div>
+                <div className="note-applicability">Applies when: {selected.applicability}</div>
               ) : null}
               {selected.antiPatterns && selected.antiPatterns.length > 0 ? (
                 <div className="note-antipatterns">
-                  <div className="t">禁忌 / 反模式</div>
+                  <div className="t">Avoid / anti-patterns</div>
                   <ul>{selected.antiPatterns.map((a, i) => <li key={i}>{a}</li>)}</ul>
                 </div>
               ) : null}
               {selected.validUntil === null && (
                 <div style={{ marginTop: 18, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <Button variant="ghost" mini disabled={busy} onClick={() => void pin(selected, !isPinned(selected))}>
-                    {isPinned(selected) ? '取消稳定前缀' : '钉到稳定前缀'}
+                    {isPinned(selected) ? 'Unpin from stable prefix' : 'Pin to stable prefix'}
                   </Button>
                   <Button variant="plain" mini disabled={busy} onClick={() => void mute(selected.id)}>
-                    不再装配
+                    Stop assembling
                   </Button>
                 </div>
               )}

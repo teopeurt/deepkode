@@ -1,4 +1,4 @@
-// 职责：Switch —— 开关（原型 .switch 结构）。
+// Responsibility: Switch —— a toggle (the prototype's .switch structure).
 export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
     <label className="switch" title={label}>

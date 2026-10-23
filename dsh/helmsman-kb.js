@@ -1,12 +1,12 @@
-// [helmsman] D3-4 知识库插件（引擎内化）。
-// 迁移点：
-//   - retrieveHybrid / makeNote / buildDistillPrompt / parseDistillJson：纯函数原样搬
-//   - distillWithAgent：ACP 会话（sessionNew+prompt+轮询读JSONL）→ 引擎内 agents 直接驱动
-//     （followup + whenIdle + session.events 直读，零轮询、零 ACP、零补丁）
-// 存储：D3-4 阶段内存 Map（SQLite 搬迁留到 D3-4 完整版）。
-// 接口：
+// [helmsman] D3-4 knowledge-base plugin (internalized into the engine).
+// Migration points:
+//   - retrieveHybrid / makeNote / buildDistillPrompt / parseDistillJson: pure functions ported as-is
+//   - distillWithAgent: ACP session (sessionNew+prompt+polling the JSONL) → driven directly by in-engine agents
+//     (followup + whenIdle + reading session.events directly: zero polling, zero ACP, zero patches)
+// Storage: in-memory Map during D3-4 (the SQLite move is left for the full D3-4 version).
+// Interface:
 //   GET  /api/kb/search?q=&project=   → [{id,title,summary,score}]
-//   POST /api/kb/notes               → {note}（人工沉淀）
+//   POST /api/kb/notes               → {note} (manual capture)
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -15,9 +15,9 @@ import { embedTexts, embedNotes, cosine } from './helmsman-embedding.js'
 export const name = 'helmsman-kb'
 export const inject = ['webServer', 'agents', 'sessions', 'helmsmanStorage', 'helmsmanBoard']
 
-// ---------- 纯函数：从 server-ts/kb.ts + distill.ts 原样搬（只去 node:fs/ACP 依赖） ----------
+// ---------- Pure functions: ported as-is from server-ts/kb.ts + distill.ts (only the node:fs/ACP dependencies removed) ----------
 
-/** 规则检索（关键词匹配，融合排序）。 */
+/** Rule-based retrieval (keyword matching, fused ranking). */
 function deriveQueries(taskText) {
   const t = String(taskText ?? '').toLowerCase()
   const tokens = t.split(/[^a-z0-9\u4e00-\u9fff]+/).filter(Boolean)
@@ -31,7 +31,7 @@ function deriveQueries(taskText) {
   return out.slice(0, 8)
 }
 
-/** 检索命中（简单规则版：标题/内容/关键词包含任一 query 即命中）。 */
+/** Retrieval hits (simple rule version: a hit if title/content/keywords contain any query). */
 function retrieve(notes, queries, opts = {}) {
   const limit = opts.limit ?? 5
   const hits = []
@@ -54,12 +54,12 @@ function retrieve(notes, queries, opts = {}) {
   return hits.slice(0, limit).map((h) => ({ note: h.note, score: h.score }))
 }
 
-// ---------- 混合检索（D3-8：server-ts/kb.ts retrieveHybrid 迁移） ----------
-// 规则通道（词命中必过，含新鲜度/信任权重）+ 语义通道（向量相似，词未命中也能进）。
-// 融合分：规则命中条目 = 0.7·规则分 + 0.3·语义分；纯语义条目 = 0.8·语义分。
-// embedding 不可用 → 纯规则结果（降级零破坏）。
+// ---------- Hybrid retrieval (D3-8: migrated from server-ts/kb.ts retrieveHybrid) ----------
+// Rule channel (keyword hits always pass, with freshness/trust weighting) + semantic channel (vector similarity; can get in even without a keyword hit).
+// Fused score: rule-hit entries = 0.7·rule score + 0.3·semantic score; semantic-only entries = 0.8·semantic score.
+// embedding unavailable → pure rule results (degrades without breaking anything).
 
-/** 语义通道的候选门槛（bge 中文相似度：无关 ~0.3，相关 ~0.6+；0.5 是合理门） */
+/** Candidate threshold for the semantic channel (bge Chinese similarity: unrelated ~0.3, related ~0.6+; 0.5 is a reasonable gate) */
 const SEMANTIC_THRESHOLD = 0.5
 
 async function retrieveHybrid(notes, queries, queryText, opts = {}) {
@@ -69,7 +69,7 @@ async function retrieveHybrid(notes, queries, queryText, opts = {}) {
   const ruleById = new Map(ruleHits.map((h) => [h.note.id, h.score]))
 
   const vecs = opts.embedNotes ? await opts.embedNotes(notes) : await embedNotes(notes)
-  if (!vecs || vecs.length !== notes.length) return ruleHits // 笔记向量不可用 → 纯规则
+  if (!vecs || vecs.length !== notes.length) return ruleHits // note vectors unavailable → rules only
   const qv = opts.embedQuery ? await opts.embedQuery(queryText) : await embedTexts([queryText], { query: true })
   if (!qv) return ruleHits
 
@@ -88,14 +88,14 @@ async function retrieveHybrid(notes, queries, queryText, opts = {}) {
   return scored.filter((s) => s.score >= threshold).slice(0, limit)
 }
 
-// ---------- 上下文装配（D3-9：server-ts/assembly.ts 迁移） ----------
-// 任务启动：任务定义 + 知识库检索命中 → 首条 prompt（规格 §4.2 五步的规则版）。
-// 前缀分区（§6D 缓存杠杆）：[项目稳定知识块（固定跨任务 → KV 缓存）][任务定义 + 相关命中（变化）]。
+// ---------- Context assembly (D3-9: migrated from server-ts/assembly.ts) ----------
+// Task start: task definition + knowledge-base retrieval hits → first prompt (rule-based version of the five steps in spec §4.2).
+// Prefix partitioning (§6D cache lever): [stable project knowledge block (fixed across tasks → KV cache)][task definition + relevant hits (varies)].
 
 const STABLE_TAG = 'stable'
 const TRUST_RANK_ASSEMBLY = { 'human-approved': 3, 'agent-generated': 2, unverified: 1 }
 
-/** 稳定前缀只收用户钉的 `stable` 标签，不按信任级自动塞旧笔记。 */
+/** The stable prefix only includes notes the user pinned with the `stable` tag; it does not auto-stuff old notes by trust level. */
 function selectStableNotes(notes, limit = 5) {
   return (notes ?? [])
     .filter((n) => (n.tags ?? []).some((t) => String(t).toLowerCase() === STABLE_TAG))
@@ -108,7 +108,7 @@ function selectStableNotes(notes, limit = 5) {
     .map((n) => ({ title: n.title, content: n.content }))
 }
 
-/** 一条笔记相对历史执行的债务：注入了没用 / 用了还失败。 */
+/** A note's debt relative to past executions: injected but unused / used but still failed. */
 function scoreNoteDebt(noteId, metrics) {
   let injected = 0
   let cited = 0
@@ -127,13 +127,13 @@ function scoreNoteDebt(noteId, metrics) {
   return { injected, cited, failedWhenCited, status }
 }
 
-/** 任务相关检索：unused / toxic 不再装配。稳定前缀只收用户钉的 `stable` 标签，不走这条。 */
+/** Task-relevant retrieval: unused / toxic are no longer assembled. The stable prefix only takes user-pinned `stable` notes and does not go through this. */
 function debtDemoteWeight(status) {
   if (status === 'toxic' || status === 'unused') return 0
   return 1
 }
 
-/** 装配简报：混合检索任务相关命中 + 债务降权。 */
+/** Assemble the brief: hybrid retrieval of task-relevant hits + debt demotion. */
 async function assembleBrief({ taskTitle, taskDescription, notes, threshold = 0.15, maxKbEntries = 5, demote = {} }) {
   const taskText = `${taskTitle ?? ''}\n${taskDescription ?? ''}`.trim()
   const queries = deriveQueries(taskText)
@@ -157,57 +157,57 @@ async function assembleBrief({ taskTitle, taskDescription, notes, threshold = 0.
   }
 }
 
-/** 渲染为发给引擎的 prompt 文本（简报 → 首条消息）。 */
+/** Render into the prompt text sent to the engine (brief → first message). */
 function renderBriefPrompt(brief, projectStableNotes = []) {
   const lines = []
   if (projectStableNotes.length > 0) {
-    lines.push('—— 项目稳定知识（本项目的既有结论，跨任务一致）——')
+    lines.push('-- Project stable knowledge (established conclusions for this project, consistent across tasks) --')
     for (const n of projectStableNotes) {
-      lines.push(`• ${n.title}：${(n.content ?? []).join(' ').slice(0, 200)}`)
+      lines.push(`• ${n.title}: ${(n.content ?? []).join(' ').slice(0, 200)}`)
     }
     lines.push('')
   }
-  lines.push(`任务：${brief.taskTitle}`)
+  lines.push(`Task: ${brief.taskTitle}`)
   if (String(brief.taskDescription ?? '').trim()) lines.push(brief.taskDescription.trim())
   if (brief.kbHits.length > 0) {
-    lines.push('', '—— 与本任务相关的知识库条目（按相关度排序）——')
+    lines.push('', '-- Knowledge-base entries relevant to this task (sorted by relevance) --')
     for (const h of brief.kbHits) {
       lines.push(`[${h.score}] ${h.title}`)
-      if (h.applicability) lines.push(`    适用：${h.applicability.slice(0, 160)}`)
+      if (h.applicability) lines.push(`    Applies when: ${h.applicability.slice(0, 160)}`)
       if (h.antiPatterns?.length > 0) {
-        lines.push(`    禁忌：${h.antiPatterns.slice(0, 3).join('；').slice(0, 200)}`)
+        lines.push(`    Avoid: ${h.antiPatterns.slice(0, 3).join('; ').slice(0, 200)}`)
       }
     }
   }
   return lines.join('\n')
 }
 
-/** 内化模式（WikiSkill 对比实验 B 组）：命中条目编译成"项目技能手册"直接内嵌。
- * 与 renderBriefPrompt 的区别：这里给完整流程（content 全文）而非仅标题+分数，
- * 并显式标注"按此流程执行"，模拟"技能已内化"（不走逐次检索）。 */
-/** 内化模式（WikiSkill 对比实验 B 组）：命中条目编译成"项目技能手册"直接内嵌。
- * 与 renderBriefPrompt 的区别：这里给完整流程（content 全文）而非仅标题+分数，
- * 并显式标注"按此流程执行"，模拟"技能已内化"（不走逐次检索）。
- * v2（扩样本后修正）：加聚焦指令防"过度执行"——手册只作参考，不扩展任务范围。 */
+/** Internalized mode (WikiSkill comparison experiment, group B): hit entries are compiled into a "project skill handbook" and embedded directly.
+ * Difference from renderBriefPrompt: this gives the full procedure (full content) rather than just title + score,
+ * and explicitly says "follow this procedure", simulating "the skill is internalized" (no per-task retrieval). */
+/** Internalized mode (WikiSkill comparison experiment, group B): hit entries are compiled into a "project skill handbook" and embedded directly.
+ * Difference from renderBriefPrompt: this gives the full procedure (full content) rather than just title + score,
+ * and explicitly says "follow this procedure", simulating "the skill is internalized" (no per-task retrieval).
+ * v2 (revised after enlarging the sample): adds a focus instruction to prevent "over-execution" —— the handbook is reference only and does not expand the task scope. */
 function renderInternalizedSkill(taskTitle, kbHits, opts = {}) {
   const lines = []
-  lines.push(`任务：${taskTitle}`)
+  lines.push(`Task: ${taskTitle}`)
   lines.push('')
   if (kbHits.length === 0) {
-    lines.push('（项目知识库暂无相关条目，按任务说明自行完成）')
+    lines.push('(The project knowledge base has no relevant entries yet; complete the task according to its description.)')
     return lines.join('\n')
   }
-  // 按相关度裁剪：只注入命中分最高的前 N 条（防整本手册导致过度执行）
+  // Trim by relevance: only inject the top-N highest-scoring hits (prevents the whole handbook from causing over-execution)
   const maxEntries = opts.maxEntries ?? 3
   const top = [...kbHits].sort((a, b) => b.score - a.score).slice(0, maxEntries)
-  lines.push('—— 项目技能手册（来自知识库沉淀）——')
-  lines.push('使用原则：仅当条目与当前任务直接相关时参考其流程；不要因手册内容扩展任务范围，按任务要求完成即可。')
+  lines.push('-- Project skill handbook (distilled from the knowledge base) --')
+  lines.push('Usage rule: only follow an entry\'s procedure when it is directly relevant to the current task; do not expand the task scope because of the handbook — just complete what the task asks.')
   for (const h of top) {
-    lines.push(`## ${h.title}（相关度 ${h.score}）`)
+    lines.push(`## ${h.title} (relevance ${h.score})`)
     for (const c of h.content ?? []) lines.push(`- ${c}`)
-    if (h.applicability) lines.push(`适用：${h.applicability}`)
+    if (h.applicability) lines.push(`Applies when: ${h.applicability}`)
     if (h.antiPatterns?.length > 0) {
-      lines.push('禁忌：')
+      lines.push('Avoid:')
       for (const a of h.antiPatterns) lines.push(`  ✗ ${a}`)
     }
   }
@@ -237,29 +237,29 @@ function makeNote(input) {
   }
 }
 
-/** 提炼 prompt（有界：尾部 2000 字符 + 相关笔记 ≤3 条摘要）。 */
+/** Distillation prompt (bounded: last 2000 characters + at most 3 related note summaries). */
 function buildDistillPrompt(input) {
   const lines = []
-  lines.push('任务标题：' + (input.title ?? '').slice(0, 200))
+  lines.push('Task title: ' + (input.title ?? '').slice(0, 200))
   lines.push('')
-  lines.push('任务输出（末尾）：')
+  lines.push('Task output (tail):')
   lines.push((input.tail ?? '').slice(0, 2000))
   if (input.related?.length > 0) {
     lines.push('')
-    lines.push('相关笔记（摘要）：')
+    lines.push('Related notes (summaries):')
     for (const r of input.related.slice(0, 3)) {
       lines.push(`- ${r.title ?? ''}: ${(r.summary ?? '').slice(0, 200)}`)
     }
   }
   lines.push('')
-  lines.push('请从任务输出中提炼一条结构化知识条目，严格输出 JSON：')
-  lines.push('{"title":"简短标题","content":["要点1","要点2"],"keywords":["k1","k2"],"summary":"一句话总结","anti_patterns":["踩过的坑/禁忌（如无则空数组）"],"applicability":"这条知识在什么场景下适用（如无则空字符串）"}')
-  lines.push('若任务输出包含"别这样做"的经验（踩坑、失败原因、禁忌），提炼进 anti_patterns；applicability 说明适用边界，防误用。')
-  lines.push('若无值得沉淀的知识，输出 {"title":""}。只输出 JSON，不要其他文字。')
+  lines.push('Distill one structured knowledge entry from the task output. Output strictly JSON:')
+  lines.push('{"title":"short title","content":["point 1","point 2"],"keywords":["k1","k2"],"summary":"one-sentence summary","anti_patterns":["pitfalls/things to avoid (empty array if none)"],"applicability":"in what situations this knowledge applies (empty string if none)"}')
+  lines.push('If the task output contains "don\'t do this" lessons (pitfalls, causes of failure, things to avoid), distill them into anti_patterns; applicability states the boundaries of use, to prevent misuse.')
+  lines.push('If there is no knowledge worth keeping, output {"title":""}. Output only JSON, no other text.')
   return lines.join('\n')
 }
 
-/** 解析提炼 JSON（容错：剥掉代码块围栏/前后杂文）。 */
+/** Parse the distillation JSON (tolerant: strips code fences / surrounding prose). */
 function parseDistillJson(text) {
   const t = String(text ?? '').trim()
   if (!t) return null
@@ -282,11 +282,11 @@ function parseDistillJson(text) {
   }
 }
 
-// ---------- 引擎接点：distill 用 agents 直接驱动（替代 ACP） ----------
+// ---------- Engine hook point: distill driven directly by agents (replaces ACP) ----------
 
 /**
- * 提炼：引擎内建 distill 会话 → followup → whenIdle → session.events 直读。
- * 替代 v1 的 acp.sessionNew + sessionPrompt + 轮询读 JSONL。
+ * Distill: create a distill session inside the engine → followup → whenIdle → read session.events directly.
+ * Replaces v1's acp.sessionNew + sessionPrompt + polling the JSONL.
  */
 async function distillWithEngine(ctx, input, timeoutMs = 120000) {
   const sid = SessionId(`distill-${randomUUID().slice(0, 12)}`)
@@ -295,19 +295,19 @@ async function distillWithEngine(ctx, input, timeoutMs = 120000) {
     const prompt = buildDistillPrompt(input)
     const { agent, dispose: d } = await ctx.agents.create({
       sessionId: sid,
-      // distill 只消费 prompt 文本（任务输出已内联），不接触项目文件：
-      // cwd 指向独立临时目录，避免 agent 拿到主工作区路径后乱改项目文件
+      // distill only consumes the prompt text (task output is inlined) and never touches project files:
+      // cwd points at a separate temp directory so the agent cannot get the main workspace path and modify project files
       meta: { cwd: '/tmp' },
       agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
       setup: (agentCtx) => {
-        // distill 预设：纯文本提炼，不挂文件/命令工具（D3-6 修复：此前拿到全工具会改项目文件）
+        // distill preset: pure text distillation, no file/command tools mounted (D3-6 fix: previously it got all tools and modified project files)
         try {
-          // view() 需要显式 scope：在 agent 的 setup 里传 agentCtx 即当前 agent scope
+          // view() needs an explicit scope: passing agentCtx inside the agent's setup gives the current agent scope
           const v = agentCtx.tools?.view?.(agentCtx)
           const deny = v?.restrictableNames?.size ? [...v.restrictableNames] : ['bash', 'read', 'write', 'edit', 'subagent', 'workflow', 'todo_write', 'skill', 'send_message']
           agentCtx.tools.restrict({ deny })
         } catch (e) {
-          console.warn('[helmsman-kb] distill 工具限制失败（不阻断）:', e?.message ?? e)
+          console.warn('[helmsman-kb] failed to restrict distill tools (non-blocking):', e?.message ?? e)
         }
       },
     })
@@ -327,7 +327,7 @@ async function distillWithEngine(ctx, input, timeoutMs = 120000) {
     if (parsed == null || parsed.title === '') return null
     return parsed
   } catch (e) {
-    console.error('[helmsman-kb] distill 失败（回落规则版）:', e?.message ?? e)
+    console.error('[helmsman-kb] distill failed (falling back to rule version):', e?.message ?? e)
     return null
   } finally {
     if (dispose) await dispose().catch(() => undefined)
@@ -347,16 +347,16 @@ function extractLastAssistantText(events) {
   return text.trim()
 }
 
-// ---------- 插件主体：路由 + 内存存储 ----------
+// ---------- Plugin body: routes + storage ----------
 
 export function apply(ctx) {
   const { webServer } = ctx
   const storage = ctx.get('helmsmanStorage')?.storage
-  // 笔记统一走 SQLite（listNotes 加载；无 project 时用固定默认遍历）
+  // Notes all go through SQLite (loaded via listNotes; with no project, fall back to the fixed default)
   const loadNotes = (project) => {
     if (!storage) return []
     if (project) return storage.listNotes(project)
-    return storage.listNotes('default') // 无 project 过滤：默认库（前端总是传 project）
+    return storage.listNotes('default') // no project filter: default library (the frontend always passes project)
   }
   const json = (res, code, body) => {
     res.writeHead(code, { 'content-type': 'application/json' })
@@ -369,10 +369,10 @@ export function apply(ctx) {
     req.on('error', reject)
   })
 
-  // ---------- 自动沉淀（v1 distillOrFallback 迁移） ----------
-  // 任务 turn/end 且 Done → 从投影取任务输出 → distill 提炼 → 存笔记（失败规则版兜底）
+  // ---------- Automatic capture (migrated from v1 distillOrFallback) ----------
+  // Task turn/end and Done → take the task output from the projection → distill → store the note (rule version as fallback on failure)
   const board = ctx.get('helmsmanBoard')
-  const autoSedimented = new Set() // 已沉淀的 (sid, turn) 防重复
+  const autoSedimented = new Set() // (sid, turn) pairs already captured, to prevent duplicates
   if (board) {
     ctx.on('session/event', (session, event) => {
       if (!session?.id || event?.type !== 'turn/end') return
@@ -380,21 +380,21 @@ export function apply(ctx) {
       const turn = event.data?.turn
       const key = `${sid}:${turn}`
       if (autoSedimented.has(key)) return
-      // 从投影找任务状态（card execution 或 chat）
+      // Find the task state in the projection (card execution or chat)
       const pid = board.projection?.sessionProject?.[sid]
       if (!pid) return
       const cardId = board.projection?.sessionCard?.[sid]
       const proj = board.projection?.projects?.[pid]
       const t = cardId ? proj?.cards?.[cardId]?.executions?.[sid] : proj?.chats?.[sid]
       if (!t || t.status !== 'Done') return
-      // 有实际输出才沉淀（Text 活动）
+      // Only capture if there is actual output (Text activities)
       const texts = (t.activities ?? []).filter((a) => 'Text' in a).map((a) => a.Text.text)
       const tail = texts.join('\n').slice(-2000)
       if (!tail.trim()) return
       autoSedimented.add(key)
       void (async () => {
         try {
-          const title = t.title ?? '任务沉淀'
+          const title = t.title ?? 'Task capture'
           const related = []
           const result = await distillWithEngine(ctx, {
             cwd: proj.path,
@@ -410,17 +410,17 @@ export function apply(ctx) {
               antiPatterns: result.antiPatterns ?? [], applicability: result.applicability ?? '',
               sourceKind: 'task', sourceRef: sid, trust: 'agent-generated',
             })
-            console.log(`[helmsman-kb] 自动沉淀「${result.title}」（任务 ${title.slice(0, 24)}）`)
+            console.log(`[helmsman-kb] auto-captured "${result.title}" (task ${title.slice(0, 24)})`)
           } else {
-            // 规则版兜底：标题 + 尾部摘要
+            // Rule-version fallback: title + tail summary
             note = makeNote({
               projectId: pid, title: title.slice(0, 60), content: texts.slice(0, 10),
               tags: [], keywords: [], summary: tail.slice(0, 120),
               sourceKind: 'task', sourceRef: sid, trust: 'agent-generated',
             })
-            console.log(`[helmsman-kb] 规则版沉淀「${title.slice(0, 24)}」`)
+            console.log(`[helmsman-kb] rule-version capture "${title.slice(0, 24)}"`)
           }
-          // 同任务会话已有笔记 → 升级（version+1、保留 id/createdAt/validFrom），不新建
+          // The same task session already has a note → upgrade it (version+1, keep id/createdAt/validFrom) instead of creating a new one
           const prev = storage
             ? storage.listNotes(pid).find((n) => n.source?.kind === 'task' && n.source?.ref === sid)
             : undefined
@@ -429,18 +429,18 @@ export function apply(ctx) {
             note.version = (prev.version ?? 1) + 1
             note.createdAt = prev.createdAt
             note.validFrom = prev.validFrom
-            console.log(`[helmsman-kb] 同任务更新「${note.title}」→ v${note.version}`)
+            console.log(`[helmsman-kb] same-task update "${note.title}" → v${note.version}`)
           }
           if (storage) storage.upsertNote(note)
         } catch (e) {
-          console.error('[helmsman-kb] 自动沉淀失败:', e?.message ?? e)
+          console.error('[helmsman-kb] automatic capture failed:', e?.message ?? e)
         }
       })()
     })
-    console.log('[helmsman-kb] 自动沉淀已启用（任务 Done → distill → 存库）')
+    console.log('[helmsman-kb] automatic capture enabled (task Done → distill → store)')
   }
 
-  // GET /api/kb/search?q=&project= —— 混合检索（规则 + 语义，embedding 不可用自动回落规则）
+  // GET /api/kb/search?q=&project= —— hybrid retrieval (rules + semantic; falls back to rules automatically if embedding is unavailable)
   webServer.register({
     kind: 'exact',
     path: '/api/kb/search',
@@ -452,17 +452,17 @@ export function apply(ctx) {
       if (!q.trim()) return json(res, 200, [])
       try {
         const hits = await retrieveHybrid(pool, deriveQueries(q), q, { limit: 8 })
-        // 返回完整笔记 + score（前端表格列依赖 tags/source/trust/validUntil）
+        // Return full notes + score (frontend table columns depend on tags/source/trust/validUntil)
         json(res, 200, hits.map((h) => ({ ...h.note, score: h.score })))
       } catch (e) {
-        console.warn('[helmsman-kb] 混合检索失败（回落规则）:', e?.message ?? e)
+        console.warn('[helmsman-kb] hybrid retrieval failed (falling back to rules):', e?.message ?? e)
         const hits = retrieve(pool, deriveQueries(q), { limit: 8 })
         json(res, 200, hits.map((h) => ({ ...h.note, score: h.score })))
       }
     },
   })
 
-  // /api/kb/notes —— GET 列表（前端契约）+ POST 人工沉淀
+  // /api/kb/notes —— GET list (frontend contract) + POST manual capture
   webServer.register({
     kind: 'exact',
     path: '/api/kb/notes',
@@ -471,7 +471,7 @@ export function apply(ctx) {
         const url = new URL(req.url ?? '', 'http://localhost')
         const project = url.searchParams.get('project')
         const list = loadNotes(project)
-        // 有效笔记优先（未失效），按创建时间倒序
+        // Valid notes first (not invalidated), sorted by creation time descending
         list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         return json(res, 200, list)
       }
@@ -480,7 +480,7 @@ export function apply(ctx) {
           const body = await readBody(req)
           const note = makeNote({
             projectId: body.project_id ?? 'default',
-            title: body.title ?? '(无题)',
+            title: body.title ?? '(untitled)',
             content: body.content ?? [],
             tags: body.tags ?? [],
             keywords: body.keywords ?? [],
@@ -499,7 +499,7 @@ export function apply(ctx) {
     },
   })
 
-  // POST /api/kb/notes/:id/invalidate —— 失效笔记
+  // POST /api/kb/notes/:id/invalidate —— invalidate a note
   webServer.register({
     kind: 'prefix',
     path: '/api/kb/notes',
@@ -512,7 +512,7 @@ export function apply(ctx) {
         if (storage) storage.invalidateNote(n.id, 'manual', Date.now())
         return json(res, 200, { ok: true })
       }
-      // POST /api/kb/notes/:id/stable —— 钉进/移出稳定前缀
+      // POST /api/kb/notes/:id/stable —— pin into / unpin from the stable prefix
       const stable = pathname.match(/^\/api\/kb\/notes\/([^/]+)\/stable$/)
       if (stable && req.method === 'POST') {
         return (async () => {
@@ -535,7 +535,7 @@ export function apply(ctx) {
     },
   })
 
-  // POST /api/kb/distill —— 任务 Done → 提炼 → 沉淀（完整闭环演示）
+  // POST /api/kb/distill —— task Done → distill → capture (full closed-loop demo)
   webServer.register({
     kind: 'exact',
     path: '/api/kb/distill',
@@ -569,9 +569,9 @@ export function apply(ctx) {
     },
   })
 
-  // ---------- 内部服务：helmsmanKb（供 helmsman-tasks 任务启动装配） ----------
+  // ---------- Internal service: helmsmanKb (for helmsman-tasks task-start assembly) ----------
   ctx.provide('helmsmanKb', {
-    /** 任务启动装配：项目笔记 + 历史度量 → {prompt, kbHits}。 */
+    /** Task-start assembly: project notes + historical metrics → {prompt, kbHits}. */
     async assembleTaskPromptFull({ taskTitle, taskDescription, projectId, brief = true, internalize = false }) {
       const pool = loadNotes(projectId)
       const metrics = storage ? storage.listMetrics(projectId) : []
@@ -591,22 +591,22 @@ export function apply(ctx) {
         demote,
       })
       if (internalize) {
-        // 内化模式（WikiSkill 对比实验 B 组）：把命中条目编译成"项目技能手册"
-        // 直接内嵌（完整流程 + 反模式 + 适用条件），任务按手册执行而非逐次检索。
+        // Internalized mode (WikiSkill comparison experiment, group B): compile the hit entries into a "project skill handbook"
+        // embedded directly (full procedure + anti-patterns + applicability), so the task follows the handbook rather than retrieving per task.
         return { prompt: renderInternalizedSkill(taskTitle ?? '', brief2.kbHits, { maxEntries: 3 }), kbHits: brief2.kbHits, internalized: true }
       }
       return { prompt: renderBriefPrompt(brief2, stableNotes), kbHits: brief2.kbHits }
     },
-    /** 仅 prompt（兼容旧签名）。 */
+    /** Prompt only (compatible with the old signature). */
     async assembleTaskPrompt({ taskTitle, taskDescription, projectId, brief = true }) {
       const r = await this.assembleTaskPromptFull({ taskTitle, taskDescription, projectId, brief })
       return r.prompt
     },
-    /** 稳定前缀笔记（前端展示）。 */
+    /** Stable-prefix notes (for frontend display). */
     selectStableNotes,
   })
 
-  console.log('[helmsman-kb] 知识库路由已注册：/api/kb/search /api/kb/notes /api/kb/distill；装配服务 helmsmanKb 已提供')
+  console.log('[helmsman-kb] knowledge-base routes registered: /api/kb/search /api/kb/notes /api/kb/distill; assembly service helmsmanKb provided')
 }
 
 export default { name, inject, apply }

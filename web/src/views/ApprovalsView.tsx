@@ -1,6 +1,6 @@
-// 职责：批复队列（P0 一等表面，§4）—— 聚合项目内所有 Waiting（plan/permission/acceptance/cost），
-// 每张卡（ApprovalCard，Beautiful UI 移植）呈现"要什么 + 为什么 + 卡了多久"，
-// 决策（批准/拒绝）必须带评论送达 agent；策略建议一键采用（仅本次，不静默）。
+// Responsibility: approval queue (P0 first-class surface, §4) —— aggregates every Waiting in the project (plan/permission/acceptance/cost);
+// each card (ApprovalCard, ported from Beautiful UI) shows "what it needs + why + how long it has been stuck";
+// a decision (approve/reject) must carry a comment delivered to the agent; policy suggestions can be adopted in one click (this time only, never silently).
 import { useEffect, useState } from 'react';
 import { useUi } from '../store/ui';
 import { listApprovals, decideApproval, listPolicies, deletePolicy, listSuspendedApprovals, resumeApproval, resumeAllApprovals, type ApprovalItem, type PolicyRow } from '../api/client';
@@ -36,34 +36,34 @@ export function ApprovalsView({ pid }: { pid: string }) {
       const ok = await decideApproval(id, outcome, comment, remember);
       if (ok) await load();
     } catch (e) {
-      toast(`决策失败：${e instanceof Error ? e.message.slice(0, 120) : String(e)}`);
+      toast(`Decision failed: ${e instanceof Error ? e.message.slice(0, 120) : String(e)}`);
     }
   };
 
   const isEmpty = items.length === 0 && suspended.length === 0;
 
-  // 空态：没有待批事项时整个视图空白——点进来就知道当前没有要批复的，不渲染任何标题/提示。
+  // Empty state: when nothing is awaiting approval the whole view is blank —— you know at a glance there's nothing to decide; no title/hints are rendered.
   if (isEmpty) return <div id="apprview" />;
 
   return (
     <div id="apprview">
       <div className="panel">
         <h2>
-          批复队列 <span className="muted">等待你确认的事项</span>
+          Approval queue <span className="muted">Items waiting for your confirmation</span>
           <button className="policy-toggle" onClick={() => setShowPolicies((v) => !v)}>
-            🧠 策略规则 {policies.length ? `(${policies.length})` : ''}
+            🧠 Policy rules {policies.length ? `(${policies.length})` : ''}
           </button>
         </h2>
         {showPolicies && (
           <div className="policy-panel">
-            {policies.length === 0 && <div className="muted" style={{ padding: '6px 0' }}>暂无策略 —— 批复时勾选「记住这个选择」会沉淀策略原子，同类批复 count≥2 后给出建议。</div>}
+            {policies.length === 0 && <div className="muted" style={{ padding: '6px 0' }}>No policies yet —— checking "Remember this choice" when deciding captures a policy atom; once similar decisions reach count≥2, a suggestion is offered.</div>}
             {policies.map((p) => (
               <div key={p.id} className="policy-row">
                 <span className="tag">{p.kind}</span>
                 <span className="tag">{p.scope}</span>
-                <span className={'policy-outcome ' + p.outcome}>{p.outcome === 'approved' ? '批准' : '拒绝'} ×{p.count}</span>
+                <span className={'policy-outcome ' + p.outcome}>{p.outcome === 'approved' ? 'Approved' : 'Rejected'} ×{p.count}</span>
                 <span className="muted" style={{ fontSize: 10.5, fontFamily: 'var(--mono)' }}>{new Date(p.updated_at).toLocaleString()}</span>
-                <button className="btn mini ghost" onClick={async () => { if (await deletePolicy(p.id)) void load(); }}>删除</button>
+                <button className="btn mini ghost" onClick={async () => { if (await deletePolicy(p.id)) void load(); }}>Delete</button>
               </div>
             ))}
           </div>
@@ -71,15 +71,15 @@ export function ApprovalsView({ pid }: { pid: string }) {
         {suspended.length > 0 ? (
           <div className="suspend-panel">
             <div className="suspend-head">
-              <span>⏸ 挂起 {suspended.length} 项（Waiting 超时 30 分钟自动挂起 · 非失败）</span>
-              <button className="btn mini ghost" onClick={async () => { if (await resumeAllApprovals(pid)) void load(); }}>全部恢复</button>
+              <span>⏸ {suspended.length} suspended (a Waiting is suspended automatically after a 30-minute timeout · not a failure)</span>
+              <button className="btn mini ghost" onClick={async () => { if (await resumeAllApprovals(pid)) void load(); }}>Resume all</button>
             </div>
             {suspended.map((a) => (
               <div key={a.id} className="suspend-row">
                 <span className="tag">{KIND_LABEL[a.kind] ?? a.kind}</span>
                 <span className="suspend-title">{a.task_title}</span>
                 <span className="muted" style={{ fontSize: 10.5, fontFamily: 'var(--mono)' }}>#{a.id}</span>
-                <button className="btn mini" onClick={async () => { if (await resumeApproval(a.id)) void load(); }}>恢复</button>
+                <button className="btn mini" onClick={async () => { if (await resumeApproval(a.id)) void load(); }}>Resume</button>
               </div>
             ))}
           </div>

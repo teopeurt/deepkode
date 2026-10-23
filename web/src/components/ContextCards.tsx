@@ -1,6 +1,6 @@
-// 职责：知识块卡（Beautiful UI「Context Cards」移植，MIT © Shane Levine）——
-//   标题栏（列表 icon + 标题 + 字符数）+ 内容摘要（默认 3 行截断）+ 来源 chip（扩展名/来源类型着色）+ 相关度/徽标。
-// 来源色：pdf→红 / csv→绿 / md·task→蓝 / human→绿 / chat→灰；走既有语义 token（--red/--green/--blue/--gray）。
+// Responsibility: knowledge chunk cards (port of Beautiful UI's "Context Cards", MIT © Shane Levine) ——
+//   title bar (list icon + title + character count) + content summary (truncated to 3 lines by default) + source chip (colored by extension/source type) + relevance/badges.
+// Source colors: pdf→red / csv→green / md·task→blue / human→green / chat→gray; uses existing semantic tokens (--red/--green/--blue/--gray).
 export type ChunkBadgeTone = 'ok' | 'info' | 'warn' | 'muted';
 
 export interface ChunkBadge {
@@ -11,17 +11,17 @@ export interface ChunkBadge {
 export interface ContextChunk {
   id: string | number;
   title: string;
-  /** 点击卡片（如跳转详情） */
+  /** Click the card (e.g. jump to details) */
   onClick?: () => void;
   content?: string;
-  /** 字符数（显示在标题栏右侧；不传则不显示） */
+  /** Character count (shown on the right of the title bar; hidden if not passed) */
   chars?: number;
   sourceKind?: string;
   sourceRef?: string;
-  /** 相关度 0-1（显示为百分比） */
+  /** Relevance 0-1 (shown as a percentage) */
   score?: number;
   badges?: ChunkBadge[];
-  /** 内容是否 3 行截断（默认 true） */
+  /** Whether content is truncated to 3 lines (default true) */
   clamp?: boolean;
 }
 
@@ -30,29 +30,29 @@ const KIND_EXT: Record<string, { label: string; cls: string }> = {
   csv: { label: 'CSV', cls: 'csv' },
   md: { label: 'MD', cls: 'md' },
   markdown: { label: 'MD', cls: 'md' },
-  task: { label: '任务', cls: 'task' },
-  human: { label: '人工', cls: 'human' },
-  chat: { label: '会话', cls: 'chat' },
+  task: { label: 'Task', cls: 'task' },
+  human: { label: 'Human', cls: 'human' },
+  chat: { label: 'Chat', cls: 'chat' },
 };
 
 const BADGE_TONE: Record<ChunkBadgeTone, string> = {
-  ok: 'human-approved',   // 绿
-  info: 'agent-generated', // 蓝
-  warn: 'unverified',     // 灰
+  ok: 'human-approved',   // green
+  info: 'agent-generated', // blue
+  warn: 'unverified',     // gray
   muted: 'unverified',
 };
 
 export interface ContextCardsProps {
   chunks: ContextChunk[];
   title?: string;
-  /** 头部计数文案；缺省显示 chunks.length */
+  /** Header count text; defaults to chunks.length */
   countLabel?: string;
   empty?: string;
-  /** 是否渲染头部标题行（默认 true；嵌入场景可关） */
+  /** Whether to render the header title row (default true; can be turned off when embedded) */
   showHead?: boolean;
 }
 
-export function ContextCards({ chunks, title = '知识块', countLabel, empty, showHead = true }: ContextCardsProps) {
+export function ContextCards({ chunks, title = 'Knowledge chunks', countLabel, empty, showHead = true }: ContextCardsProps) {
   return (
     <div className="ctx">
       {showHead ? (
@@ -71,7 +71,7 @@ export function ContextCards({ chunks, title = '知识块', countLabel, empty, s
                 <path d="M2 4h12M2 8h12M2 12h7" />
               </svg>
               <span className="bt" title={c.title}>{c.title}</span>
-              {c.chars != null ? <span className="bc">{c.chars.toLocaleString()} 字符</span> : null}
+              {c.chars != null ? <span className="bc">{c.chars.toLocaleString()} chars</span> : null}
             </div>
             {c.content ? <div className={'ctx-body' + (c.clamp === false ? '' : ' clamp')}>{c.content}</div> : null}
             <div className="ctx-foot">

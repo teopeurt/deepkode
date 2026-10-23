@@ -1,15 +1,15 @@
-// [helmsman] D3-6 验收门（engine evidence/verify 迁移）。
-// 任务 Done 且卡有验收标准（criteria）→ 跑验收命令 + 拍工作区 git 快照，
-// 产出 AcceptanceEvidence 给人看「改了什么」再决定 merge/打回。
-//   - 项目默认 profile.setting === 'delivery' 且 approval !== 'yolo' → 挂起 acceptance 审批
-//   - 否则 → 直接 merge worktree（v1 行为）
-// 迁移源：server-ts/src/evidence.ts + verify.ts（纯 Node 函数，无 ACP 依赖）。
+// [helmsman] D3-6 acceptance gate (migration of the engine evidence/verify modules).
+// Task Done and the card has acceptance criteria → run the acceptance command + take a git snapshot of the workspace,
+// producing AcceptanceEvidence so a human can see "what changed" before deciding to merge or send it back.
+//   - Project default profile.setting === 'delivery' and approval !== 'yolo' → suspend with an acceptance approval
+//   - Otherwise → merge the worktree directly (v1 behavior)
+// Migrated from: server-ts/src/evidence.ts + verify.ts (plain Node functions, no ACP dependency).
 import { exec, execFileSync } from 'node:child_process'
 
 export const name = 'helmsman-acceptance'
 export const inject = ['agents', 'sessions', 'helmsmanBoard', 'helmsmanStorage', 'helmsmanWorktree', 'webServer']
 
-// ---------- 纯函数：从 server-ts/evidence.ts + verify.ts 原样搬 ----------
+// ---------- Pure functions: ported as-is from server-ts/evidence.ts + verify.ts ----------
 
 const GIT_OPTS = { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
 
@@ -20,7 +20,7 @@ function tryGit(cwd, args) {
   try { return runGit(cwd, args) } catch { return '' }
 }
 
-/** 工作区 diff 快照（git status --porcelain + diff --stat HEAD）。 */
+/** Workspace diff snapshot (git status --porcelain + diff --stat HEAD). */
 function collectWorkspaceDiff(cwd) {
   try {
     runGit(cwd, ['rev-parse', '--is-inside-work-tree'])
@@ -33,7 +33,7 @@ function collectWorkspaceDiff(cwd) {
   return { dirty: files.length > 0, files, stat: stat.slice(0, 800) }
 }
 
-/** 验收证据：setting + criteria + verify 结果 + 工作区 diff + worktree。 */
+/** Acceptance evidence: setting + criteria + verify result + workspace diff + worktree. */
 function buildAcceptanceEvidence({ cwd, criteria, verify, worktree }) {
   return {
     setting: 'delivery',
@@ -44,15 +44,15 @@ function buildAcceptanceEvidence({ cwd, criteria, verify, worktree }) {
   }
 }
 
-/** 批复条上的一句话。 */
+/** The one-line summary shown on the approval bar. */
 function acceptanceReason(ev) {
-  if (ev.verify?.verified === true) return '交付设定：验收命令已通过，请对照改动确认后 merge'
-  if (ev.verify?.verified === false) return '交付设定：验收命令未通过，请决定打回或仍合并'
-  if (ev.verify?.error) return `交付设定：验收命令未能执行（${ev.verify.error}），请对照改动人工验收`
-  return '交付设定：任务完成，请对照改动验收（通过则 merge 知识）'
+  if (ev.verify?.verified === true) return 'Delivery setting: the acceptance command passed; review the changes and merge'
+  if (ev.verify?.verified === false) return 'Delivery setting: the acceptance command failed; decide whether to send it back or merge anyway'
+  if (ev.verify?.error) return `Delivery setting: the acceptance command could not run (${ev.verify.error}); review the changes and accept manually`
+  return 'Delivery setting: task complete; review the changes for acceptance (merge the knowledge if it passes)'
 }
 
-/** 跑验收命令：退出码 0 = 通过；超时/无法执行 = null（不可判定）。 */
+/** Run the acceptance command: exit code 0 = passed; timeout / could not run = null (undecidable). */
 function runAcceptance(cwd, command, timeoutMs = 60000) {
   return new Promise((resolve) => {
     const started = Date.now()
@@ -75,15 +75,15 @@ function runAcceptance(cwd, command, timeoutMs = 60000) {
   })
 }
 
-// ---------- 插件主体 ----------
+// ---------- Plugin body ----------
 
 export function apply(ctx) {
   const board = ctx.get('helmsmanBoard')
   const storage = ctx.get('helmsmanStorage')?.storage
   const worktree = ctx.get('helmsmanWorktree')
-  const gated = new Set() // 已过验收门的 (sid, turn) 防重复
+  const gated = new Set() // (sid, turn) pairs that already went through the acceptance gate, to prevent duplicates
 
-  /** 从投影取任务执行态。 */
+  /** Get the task's execution state from the projection. */
   const getExecution = (sid) => {
     const pid = board?.projection?.sessionProject?.[sid]
     if (!pid) return null
@@ -95,24 +95,24 @@ export function apply(ctx) {
     return { pid, cardId, proj, t, card: cardId ? proj.cards?.[cardId] : undefined }
   }
 
-  /** 验收门：任务 Done + 卡有 criteria → 跑验收 + 拍证据 → 挂起 acceptance 或直接 merge。 */
+  /** Acceptance gate: task Done + card has criteria → run acceptance + collect evidence → suspend for acceptance or merge directly. */
   async function runGate(sid) {
     const found = getExecution(sid)
     if (!found) return null
     const { pid, cardId, proj, t, card } = found
-    if (!cardId || !card) return null // 仅卡片执行（chats 无验收门）
-    // 运行目录：worktree 隔离区优先，否则项目目录
+    if (!cardId || !card) return null // card executions only (chats have no acceptance gate)
+    // Run directory: the worktree isolation area if present, otherwise the project directory
     const runCwd = t.worktree?.path ?? proj.path
     const criteria = card.criteria ?? null
-    // 项目默认 profile 决定是否挂起验收（v1：preset.setting === 'delivery' && approval !== 'yolo'）
+    // The project's default profile decides whether to suspend for acceptance (v1: preset.setting === 'delivery' && approval !== 'yolo')
     const prof = storage?.defaultProfile(pid)
     const hang = prof?.setting === 'delivery' && prof?.approval !== 'yolo'
-    // 有验收标准才跑验收命令；无标准 → 直接人工对照改动
+    // Only run the acceptance command if there are acceptance criteria; no criteria → a human reviews the changes directly
     const verify = criteria ? await runAcceptance(runCwd, criteria) : null
     const evidence = buildAcceptanceEvidence({ cwd: runCwd, criteria, verify, worktree: t.worktree })
     if (hang) {
       const reason = acceptanceReason(evidence)
-      // 挂起：任务停在等待批复（投影 waiting 保留 Done 后的等待态）
+      // Suspend: the task pauses awaiting a decision (the projection's waiting keeps the post-Done waiting state)
       t.waiting = { kind: 'acceptance', reason, payload: evidence }
       if (storage) {
         storage.insertApproval({
@@ -120,23 +120,23 @@ export function apply(ctx) {
           payload: evidence, reason, outcome: null, comment: null, created_at: Date.now(),
         })
       }
-      console.log(`[helmsman-acceptance] 挂起验收 ${sid} criteria=${criteria ? '有' : '无'} verify=${verify?.verified ?? 'n/a'} files=${evidence.diff.files.length}`)
+      console.log(`[helmsman-acceptance] acceptance suspended ${sid} criteria=${criteria ? 'yes' : 'no'} verify=${verify?.verified ?? 'n/a'} files=${evidence.diff.files.length}`)
       return { gated: true, reason }
     }
-    // 非 delivery / yolo：直接 merge 回主工作区
+    // Not delivery / yolo: merge straight back into the main workspace
     if (t.worktree && worktree) {
       const mr = worktree.merge({ repo: proj.path, worktree: t.worktree, message: `helmsman: ${card.title}` })
       if (mr.ok) {
         t.worktree = null
-        console.log(`[helmsman-acceptance] 自动 merge ${sid}（非 delivery 设定）`)
+        console.log(`[helmsman-acceptance] auto-merged ${sid} (not a delivery setting)`)
       } else {
-        console.warn(`[helmsman-acceptance] merge 失败 ${sid}: ${mr.message}`)
+        console.warn(`[helmsman-acceptance] merge failed ${sid}: ${mr.message}`)
       }
     }
     return { gated: false }
   }
 
-  // 监听任务 Done（与 kb 自动沉淀同一事件源）
+  // Listen for task Done (same event source as the KB auto-capture)
   ctx.on('session/event', (session, event) => {
     if (!session?.id || event?.type !== 'turn/end') return
     const sid = session.id
@@ -145,16 +145,16 @@ export function apply(ctx) {
     const found = getExecution(sid)
     if (!found || !found.cardId) return
     if (found.t.status !== 'Done') return
-    // 任务确实做过事（有 Text 输出）才触发验收门
+    // Only trigger the acceptance gate if the task actually did something (has Text output)
     const texts = (found.t.activities ?? []).filter((a) => 'Text' in a)
     if (texts.length === 0) return
     gated.add(key)
-    void runGate(sid).catch((e) => console.error('[helmsman-acceptance] 验收门失败:', e?.message ?? e))
+    void runGate(sid).catch((e) => console.error('[helmsman-acceptance] acceptance gate failed:', e?.message ?? e))
   })
 
-  // 决策：POST /api/approvals/:id 由 helmsman-approval 处理；这里提供 merge 服务供其调用
+  // Decision: POST /api/approvals/:id is handled by helmsman-approval; this provides the merge service it calls
   ctx.provide('helmsmanAcceptance', {
-    /** 批准 → merge worktree（approval 插件决策时调用）。 */
+    /** Approve → merge the worktree (called by the approval plugin when deciding). */
     approveMerge(sid) {
       const found = getExecution(sid)
       if (!found?.t?.worktree || !worktree) return { ok: false, message: 'no worktree' }
@@ -169,17 +169,17 @@ export function apply(ctx) {
       }
       return mr.ok ? { ok: true } : { ok: false, message: mr.message }
     },
-    /** 拒绝 → 清除等待态（不 merge，worktree 保留待人工处理）。 */
+    /** Reject → clear the waiting state (no merge; the worktree is kept for manual handling). */
     rejectClear(sid) {
       const found = getExecution(sid)
       if (found?.t) found.t.waiting = null
       return { ok: true }
     },
-    /** 测试钩子：手动触发验收门（供 API 探活）。 */
+    /** Test hook: trigger the acceptance gate manually (for API probing). */
     runGate,
   })
 
-  console.log('[helmsman-acceptance] 验收门已挂载（Done → verify + evidence → 挂起/merge）')
+  console.log('[helmsman-acceptance] acceptance gate mounted (Done → verify + evidence → suspend/merge)')
 }
 
 export default { name, inject, apply }

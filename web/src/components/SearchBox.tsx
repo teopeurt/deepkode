@@ -1,6 +1,6 @@
-// 职责：命令搜索（Beautiful UI「Search」移植，MIT © Shane Levine）——
-//   输入行（icon + placeholder）+ 结果列表（实时过滤）+ 滑动高亮条（glide）+ 键盘导航（↑↓/Enter）+ 空状态。
-//   纯客户端过滤：调用方给 items + filter，组件持有 query 与高亮状态。
+// Responsibility: command search (port of Beautiful UI's "Search", MIT © Shane Levine) ——
+//   input row (icon + placeholder) + result list (live filtering) + sliding highlight bar (glide) + keyboard navigation (↑↓/Enter) + empty state.
+//   Pure client-side filtering: the caller provides items + filter; the component owns the query and highlight state.
 import { useRef, useState } from 'react';
 
 export interface SearchItem {
@@ -12,18 +12,18 @@ export interface SearchItem {
 
 interface Props {
   placeholder?: string;
-  /** 菜单模式（默认）需要；bare 模式可不传 */
+  /** Required in menu mode (the default); optional in bare mode */
   items?: SearchItem[];
   filter?: (item: SearchItem, q: string) => boolean;
   emptyText?: string;
-  /** 受控模式：外部持有 query（列表过滤需要同步） */
+  /** Controlled mode: the query is owned externally (needed to keep list filtering in sync) */
   value?: string;
   onValue?: (q: string) => void;
-  /** bare = 纯输入框（不渲染结果列表，结果由调用方在下方列表呈现，完全复用现有渲染） */
+  /** bare = input only (no result list is rendered; the caller shows results in its own list below, fully reusing existing rendering) */
   bare?: boolean;
 }
 
-export function SearchBox({ placeholder = '搜索…', items = [], filter = () => true, emptyText = '无匹配', value, onValue, bare = false }: Props) {
+export function SearchBox({ placeholder = 'Search…', items = [], filter = () => true, emptyText = 'No matches', value, onValue, bare = false }: Props) {
   const [q0, setQ0] = useState('');
   const [active, setActive] = useState(-1);
   const [hl, setHl] = useState<{ top: number; height: number } | null>(null);
@@ -37,7 +37,7 @@ export function SearchBox({ placeholder = '搜索…', items = [], filter = () =
 
   const shown = q.trim() ? items.filter((it) => filter(it, q.trim())) : items;
 
-  // bare 模式：只有输入行，键盘导航/结果列表全部由调用方负责
+  // bare mode: only the input row; keyboard navigation / result list are entirely the caller's job
   if (bare) {
     return (
       <div className="searchbox">
@@ -57,7 +57,7 @@ export function SearchBox({ placeholder = '搜索…', items = [], filter = () =
     );
   }
 
-  // 滑动高亮：把 glide 条移动到指定行（读 DOM offsetTop，事件时已就绪）
+  // Sliding highlight: move the glide bar to the given row (reads DOM offsetTop, which is ready at event time)
   const glide = (i: number) => {
     const el = rowsRef.current[i];
     if (el) {
