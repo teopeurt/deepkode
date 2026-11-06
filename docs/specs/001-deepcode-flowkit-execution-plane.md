@@ -1,6 +1,6 @@
 # Spec C: DeepCode as the execution plane for FlowKit (Option B)
 
-**Status:** v0.5. v0.4 recorded the WP-B, WP-F and WP-G decisions; v0.5 records the WP-E (memory) decisions and changes only §9b, the S6 row of §10, and §17. Implemented so far: S0 probes and the `worker/` skeleton, activities, plan validation, workspaces and the memory service, all tested against fakes only (no real DeepCode, model or embedding run).
+**Status:** v0.6. v0.5 recorded the WP-E decisions; v0.6 records the WP-C (intake) and WP-D (triage) decisions and changes only §9, §9a, §9b, and §18. Implemented so far: S0 probes and the `worker/` skeleton, activities, plan validation, workspaces, memory, intake and triage, all tested against fakes and synthetic data only (no real DeepCode, model, mailbox or embedding run).
 **Depends on:** Spec A (`gate: auto`) and Spec B (`orchestrate`), both implemented on the local, **unpushed** FlowKit branch `feat/auto-gated-ai-steps` (`51dcb7c`, `bbe959b`). FlowKit 1.1.0 is not published, so this work links to a local checkout until it is.
 **Replaces:** Helmsman's engine (`dsh/` plugins). Helmsman is retired, not fixed. Nothing has been deleted yet: that happens on this branch only after S0 gives a go.
 **Lives in:** `teopeurt/deepkode`, on branch `claude/deepcode-flowkit-execution-plane` (decision D6, made by the project owner). Specs A and B live with FlowKit, not here.
@@ -224,11 +224,13 @@ The plan, critique, execute, security, review pipeline from Spec B §12, with: `
 
 ## 9. Intake contract (adapters out of scope)
 
-An adapter normalizes an event to `{ source, externalId, author, receivedAt, body, attachments }`, derives `workflowId = intake:<source>:<externalId>`, and starts the flow (Temporal's workflow-id reuse policy dedupes repeats) or signals a running one. Slack (rooms, crash reports) and email can be connected through MCP servers or small webhooks. Granola's API availability is unchecked. Raw bodies are stored by reference; the workflow carries identifiers and a bounded summary.
+An adapter normalizes an event to an `Input` record `{ id, channel, source, externalId, author, receivedAt, body, attachments (metadata only, never opened), origin, originReason, requiresHuman, rawHash, contentHash, threadId, signals, occurrences[] }`, derives `workflowId = intake:<source>:<externalId>`, and starts the flow (Temporal's workflow-id reuse policy dedupes repeats) or signals a running one. Slack (rooms, crash reports) and email can be connected through MCP servers or small webhooks. Granola's API availability is unchecked. Raw bodies are stored by reference; the workflow carries identifiers and a bounded summary.
+
+**Email rules (v0.6).** (1) `externalId` is attacker-controlled for email (a forged or re-sent Message-ID), so the email adapter derives `externalId` from the `contentHash` of the normalised subject and body; the Message-ID is kept as metadata, and `contentHash` is also recorded as a search attribute. Intake dedupe on the content hash is a second layer behind the workflow id. (2) Email is untrusted unless the sender is on an explicit allowlist **and** the topmost `Authentication-Results` header comes from a configured server with an aligned DMARC pass; anything else, including multiple From headers, is untrusted. A trusted sender whose text carries an injection signal still requires a human. (3) **The real mail ingress must strip any inbound `Authentication-Results` header before stamping its own** (RFC 8601); without that, a spoofed header could be believed, so this is a deployment requirement. (4) Dedupe is per project, channel and trust class, and never raises an Input's trust; an untrusted copy and a trusted copy of the same text are two Inputs.
 
 ## 9a. Triage: one shared flow
 
-All inputs, whatever their source, enter the same FlowKit flow. The source and a trust label (`untrusted` for email, public Slack and customer reports; `internal` for notes and trusted rooms) travel as task metadata and drive policy, not the flow's shape.
+All inputs, whatever their source, enter the same FlowKit flow. The source and a trust label (`untrusted` for email, public Slack and customer reports; `internal` for notes and trusted rooms, and for email that passed the allowlist and authentication check above) travel as task metadata and drive policy, not the flow's shape.
 
 Shape (illustrative, not final YAML):
 
@@ -236,9 +238,9 @@ Shape (illustrative, not final YAML):
 id: triage
 stages:
   received:   # normalize, attach provenance, store the body by reference
-  classify:   # ai step, read-only, cheaper model: kind (bug | feature | question | feedback | crash | noise),
+  classify:   # ai step, read-only, cheaper model: kind (bug | feature | question | feedback | crash | security | noise),
               # confidence. gate: auto, decide: classificationConfident
-  dedupe:     # system step: search open tasks and Memory for the same issue. rule decides: new | merge | known-answer
+  dedupe:     # a **visible** stage (v0.6): system step searching open tasks and Memory for the same issue. rule decides: new | merge | known-answer
   route:      # ai step: project, repositories, priority, risk class, autonomy level. gate: auto, decide: routingConfident
   needs_human:  # human gate: confirm / edit routing / discard. Reached whenever a rule declines
   create_task:  # system step: start the Task workflow; rule then moves to the final stage
@@ -251,7 +253,11 @@ stages:
 Properties:
 
 - **The only output is structured data.** Raw input text is never an instruction to a writing agent: it is quoted as data in the plan prompt and is not given to `execute` roles directly.
-- **Fails closed.** Low confidence, a declined rule, or an error lands in `needs_human` (Spec A's behaviour).
+- **Fails closed.** Low confidence, a declined rule, or an error lands in `needs_human` (Spec A's behaviour). Specifically: classifier error or malformed output, low confidence (threshold 0.6), no project or an unregistered project, an ambiguous second project (margin 0.2), an empty or foreign repo set, a memory retrieval error, an unverified memory match, empty input, injection-pattern text (the classifier is skipped), and untrusted-origin items labelled `security`.
+- **Classification contract.** The classifier returns `label`, `project`, `repos`, `confidence`, `rationale` and `alternatives[]`. In `alternatives`, each `confidence` is *that alternative project's own* confidence; the ambiguity rule compares it with the top choice and depends on this definition.
+- **Trusted security items** route normally; only untrusted-origin `security` items go to a human. (D4 still requires a human before `execute` for anything untrusted.)
+- **Merging never lowers a gate.** When `dedupe` attaches an Input to an existing task, an untrusted occurrence keeps the human gate before `execute`; the untrusted copy is never dropped in favour of a trusted one.
+- **Flow wiring.** The decision runs as a rule on `classify` plus the `needs_human` gate; v0.6 makes `dedupe` a separate visible stage, so the rule's action set gains a `dedupe` stage. `route` stays inside the `classify` decision for now, because project and repos come from the classifier. Registry handlers (`triage_decision`, `classify_input`, `normalize_input`) are to be implemented.
 - **Untrusted sources require a human gate before `execute`** (D4), set by the `create_task` step in the task's metadata and enforced by a guard in the task flow.
 - **Duplicates collapse twice**: by workflow id at intake (§9) and semantically at `dedupe`.
 - **Per-source preprocessing** (for example parsing a crash report or summarizing a call note) runs in the intake adapter, before the flow, and produces the same normalized record.
@@ -263,6 +269,7 @@ Memory is a service with a defined interface, taken from Helmsman's knowledge ba
 **Note model:** `id`, `projectId`, optional `repoScope`, `title`, `content[]`, `tags`, `keywords`, `summary`, `antiPatterns[]`, `applicability`, `links`, `source { kind, ref }`, `validFrom`, `validUntil`, `invalidatedBy`, `invalidatedAt`, `version`, `trust`, `origin`, `approvedBy`, `pinned`, `conflictsWith[]`, `occurrences`, `provenance[]` (task id, repo), timestamps. Validity is bitemporal: valid time (`asOf`) and record time (`knownAt`).
 
 - `trust`: `human-approved`, `agent-generated`, `unverified`.
+- `source.kind` values used by triage: `open-task` (`ref` is the task id; marks a duplicate of that open task) and `known-answer` (a human-approved answer). Only **gate-eligible** notes (human-approved, trusted origin, unconflicted) may produce `duplicate` or `known_answer`; a strong match with any other note is `needs_human` with code `unverified_memory_match`. The retrieval `Hit` exposes `source` and `tags` so triage needs no second lookup.
 - `origin`: `trusted` or `untrusted`, recording the channel the knowledge came from. This is new, and exists to stop poisoning.
 
 **Interface:**
@@ -396,3 +403,23 @@ Applied on your instruction, following the behaviour WP-E implemented and tested
 | 7 | Untuned thresholds | Starting values, calibrated with the U10 harness | §9b rule 9 |
 
 Still open: U10 (measured with a real embedder), distillation of finished tasks into candidates, file-backed persistence tests, concurrency, and recording the snapshot id on the task.
+
+## 18. Changes at v0.6 (decisions from WP-C and WP-D)
+
+Questions 1 to 3 of WP-D were answered by you (yes, agree, agree); the rest were accepted and applied as the agents implemented and tested them. Change any you disagree with before S4 and S5.
+
+| From | Question | Resolution | Where |
+|---|---|---|---|
+| WP-D | Should dedupe be a visible stage? | Yes (you); the flow gains a `dedupe` stage | §9a |
+| WP-D | Memory marks for duplicate and known answer | `open-task` and `known-answer` source kinds, gate-eligible only (you) | §9b |
+| WP-D | Trusted security items | Route normally; only untrusted security items go to a human (you) | §9a |
+| WP-D | `Hit` lacks `source` and `tags` | Expose them; code follow-up in `memory/` | §9b |
+| WP-D | `alternatives[].confidence` meaning | That project's own confidence | §9a |
+| WP-D | Kind `security` | Added to the kinds | §9a |
+| WP-C | Email workflowId is forgeable | `externalId` from `contentHash`; Message-ID is metadata; search attribute | §9 |
+| WP-C | Authentication-Results trust | Mail ingress must strip inbound headers first; deployment requirement | §9 |
+| WP-C | Label for authenticated email | `internal` | §9a |
+| WP-C | Input record fields | Named in the contract (`origin`, `requiresHuman`, `contentHash`, others) | §9 |
+| WP-C | Untrusted and trusted copies | Two Inputs; merging never lowers a gate | §9, §9a |
+
+Code follow-ups this creates (none made): add the `dedupe` stage and a `dedupe` action to `worker/src/triage/flows/`; add `source` and `tags` to the memory `Hit`; derive the email `externalId` from `contentHash` in the intake adapter; implement the triage registry handlers.
