@@ -1,8 +1,9 @@
-# Shared triage flow (Spec C 9a). One flow for every input type; source and trust travel as metadata.
-# The rule `triage_decision` is the worker's `triage()` (worker/src/triage/decision.ts): it returns a
-# system action only for a confident, unambiguous, safe outcome. In every other case (no action, rule
-# error, degraded AI step) the stage waits for a human, and `needs_human` is reached by the `escalate`
-# action or by the SLA. Raw input text is data for the classifier, never an instruction.
+# Shared triage flow (Spec C 9a, v0.6). One flow for every input type; source and trust travel as metadata.
+# Two rule-decided stages: `classify` (rule `triage_decision`: dedupe | drop_noise | escalate) and `dedupe`
+# (rule `dedupe_decision`: route | duplicate | known_answer | escalate; it also validates the repo set).
+# Handlers are in worker/src/triage/handlers.ts. A rule returns an action only for a confident, unambiguous,
+# safe outcome; in every other case (no action, rule error, degraded AI step) the stage waits for a human, and
+# `needs_human` is reached by the `escalate` action or by the SLA. Raw input text is data, never an instruction.
 id: triage
 version: 1
 roles: [triager]
@@ -21,10 +22,21 @@ stages:
     entry:
       - { kind: ai, ref: classify_input, gate: auto, decide: triage_decision }
     actions:
+      dedupe: { to: dedupe, kind: system }
+      drop_noise: { to: discarded, kind: system }
+      escalate: { to: needs_human, kind: system }
+      send_to_human: { to: needs_human, kind: human, policy: triager_can_decide }
+
+  dedupe:
+    pendingRole: triager
+    sla: { after: 1h, escalate: { notify: triager, action: escalate } }
+    entry:
+      - { kind: system, ref: dedupe_search }
+      - { kind: rule, ref: dedupe_decision }
+    actions:
       route: { to: create_task, kind: system }
       duplicate: { to: merged, kind: system }
       known_answer: { to: answered, kind: system }
-      drop_noise: { to: discarded, kind: system }
       escalate: { to: needs_human, kind: system }
       send_to_human: { to: needs_human, kind: human, policy: triager_can_decide }
 

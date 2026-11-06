@@ -3,9 +3,12 @@ policies:
   triager_can_decide: {}
 systemSteps:
   normalize_input: {}
+  dedupe_search: {}
   create_task: {}
 aiSteps:
   classify_input: {}
 rules:
   triage_decision:
-    actions: [route, duplicate, known_answer, drop_noise, escalate]
+    actions: [dedupe, drop_noise, escalate]
+  dedupe_decision:
+    actions: [route, duplicate, known_answer, escalate]

@@ -103,6 +103,9 @@ export interface Hit {
   origin: Origin;
   pinned: boolean;
   conflict: boolean;
+  /** Where the note came from (e.g. kind `open-task` with the task id as ref); lets callers avoid a second lookup. */
+  source: { kind: string; ref: string };
+  tags: string[];
   /** stablePrefix: in the stable prefix. autoGate: may feed an auto-gate. Otherwise labelled data only. */
   eligibility: { stablePrefix: boolean; autoGate: boolean };
   label: string;

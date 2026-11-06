@@ -38,7 +38,7 @@ export interface TriageDeps {
   threshold?: number;
 }
 
-const human = (code: NeedsHumanCode, reason: string): TriageDecision & { kind: "needs_human" } => ({ kind: "needs_human", code, reason });
+const human = (code: NeedsHumanCode, reason: string): { kind: "needs_human"; code: NeedsHumanCode; reason: string } => ({ kind: "needs_human", code, reason });
 
 function validate(c: unknown): c is Classification {
   if (typeof c !== "object" || c === null) return false;
@@ -59,9 +59,41 @@ export async function triage(input: TriageInput, deps: TriageDeps): Promise<Tria
   }
 }
 
-async function decide(input: TriageInput, deps: TriageDeps): Promise<TriageDecision> {
+/** Stage 1 result (FlowKit stage `classify`). */
+export type ClassifyOutcome =
+  | { kind: "proceed"; project: string; classification: Classification }
+  | { kind: "drop_noise"; classification: Classification }
+  | { kind: "needs_human"; code: NeedsHumanCode; reason: string; classification?: Classification };
+
+/** Stage 2 result (FlowKit stage `dedupe`, which also validates the repo set before a task is created). */
+export type DedupeOutcome = TriageOutcome & { memorySnapshotId?: string };
+
+const DATA_OPEN = "<untrusted-data>";
+const DATA_CLOSE = "</untrusted-data>";
+
+/**
+ * Intake delivers text as one sanctioned `<untrusted-data>` block in which every angle bracket of the content is
+ * escaped. Screen what is inside, not the wrapper itself: the wrapper's own tags would otherwise match the
+ * injection screen and send every intake item to a person. Only one outer pair is removed; a tag left anywhere
+ * else still matches.
+ */
+export function unwrapDataBlock(text: string): string {
+  const t = text.trim();
+  return t.startsWith(DATA_OPEN) && t.endsWith(DATA_CLOSE) ? t.slice(DATA_OPEN.length, t.length - DATA_CLOSE.length) : text;
+}
+
+/** Stage 1: screen, classify, and decide whether to proceed to dedupe, drop as noise, or ask a person. */
+export async function classifyStage(input: TriageInput, deps: Pick<TriageDeps, "classifier" | "registry" | "threshold">): Promise<ClassifyOutcome> {
+  try {
+    return await classifyInner(input, deps);
+  } catch (e) {
+    return human("internal_error", `triage failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function classifyInner(input: TriageInput, deps: Pick<TriageDeps, "classifier" | "registry" | "threshold">): Promise<ClassifyOutcome> {
   const threshold = deps.threshold ?? CONFIDENCE_THRESHOLD;
-  const text = `${input.subject ?? ""}\n${input.body}`;
+  const text = `${input.subject ?? ""}\n${unwrapDataBlock(input.body)}`;
 
   if (text.trim().length === 0) return human("empty_input", "input has no text");
 
@@ -77,16 +109,16 @@ async function decide(input: TriageInput, deps: TriageDeps): Promise<TriageDecis
   } catch (e) {
     return human("classifier_error", `classifier failed: ${e instanceof Error ? e.message : String(e)}`);
   }
-  const withC = <T extends TriageDecision>(d: T): T => ({ ...d, classification: c });
+  const withC = <T extends { kind: string }>(d: T): T & { classification: Classification } => ({ ...d, classification: c });
 
-  // Fail closed on trust: only the exact value "trusted" counts.
+  // Fail closed on trust: only the exact value "trusted" counts. Trusted security items route normally (v0.6).
   if (c.label === "security" && input.trust !== "trusted") {
     return withC(human("untrusted_security", "security-labelled item from an untrusted origin goes to a person"));
   }
   if (c.confidence < threshold) {
     return withC(human("low_confidence", `confidence ${c.confidence.toFixed(2)} is below ${threshold}: ${c.rationale}`));
   }
-  if (c.label === "noise") return withC({ kind: "drop_noise" });
+  if (c.label === "noise") return { kind: "drop_noise", classification: c };
 
   if (c.project === null) return withC(human("no_project", "no registered project matches (possibly out of scope)"));
   const project = deps.registry.get(c.project);
@@ -95,21 +127,48 @@ async function decide(input: TriageInput, deps: TriageDeps): Promise<TriageDecis
   const rival = (c.alternatives ?? []).find((a) => a.project !== c.project && a.confidence >= c.confidence - AMBIGUITY_MARGIN);
   if (rival) return withC(human("ambiguous_project", `projects ${c.project} and ${rival.project} both plausible`));
 
-  // Memory first: a known duplicate or answer needs no repo set. Only gate-eligible notes can decide.
-  let snapshotId: string | undefined;
-  if (deps.memory) {
-    const m = await memoryDecision(deps.memory, project.id, text);
-    snapshotId = m.snapshotId;
-    if (m.decision) return withC({ ...m.decision, memorySnapshotId: snapshotId });
-  }
+  return { kind: "proceed", project: project.id, classification: c };
+}
 
-  const known = new Set(project.repos.map((r) => r.name));
-  const repos = [...new Set(c.repos)];
-  if (repos.length === 0 || repos.some((r) => !known.has(r))) {
-    return withC(human("repo_unclear", `repo set [${c.repos.join(", ")}] is empty or not part of project ${project.id}`));
-  }
+/**
+ * Stage 2: search open tasks and memory for the same issue, then validate the repo set. A known duplicate or
+ * answer needs no repo set. Only gate-eligible notes may decide; any other strong match goes to a person.
+ */
+export async function dedupeStage(
+  input: TriageInput,
+  classified: Extract<ClassifyOutcome, { kind: "proceed" }>,
+  deps: Pick<TriageDeps, "registry" | "memory">,
+): Promise<DedupeOutcome> {
+  try {
+    const project = deps.registry.get(classified.project);
+    if (!project) return human("unknown_project", `project ${classified.project} is not registered`);
+    const text = input.searchText ?? `${input.subject ?? ""}\n${unwrapDataBlock(input.body)}`;
 
-  return withC({ kind: "route", project: project.id, repos, humanGateBeforeExecute: input.trust !== "trusted", ...(snapshotId ? { memorySnapshotId: snapshotId } : {}) });
+    let snapshotId: string | undefined;
+    if (deps.memory) {
+      const m = await memoryDecision(deps.memory, project.id, text);
+      snapshotId = m.snapshotId;
+      if (m.decision) return { ...m.decision, ...(snapshotId ? { memorySnapshotId: snapshotId } : {}) };
+    }
+
+    const c = classified.classification;
+    const known = new Set(project.repos.map((r) => r.name));
+    const repos = [...new Set(c.repos)];
+    if (repos.length === 0 || repos.some((r) => !known.has(r))) {
+      return human("repo_unclear", `repo set [${c.repos.join(", ")}] is empty or not part of project ${project.id}`);
+    }
+    return { kind: "route", project: project.id, repos, humanGateBeforeExecute: input.trust !== "trusted", ...(snapshotId ? { memorySnapshotId: snapshotId } : {}) };
+  } catch (e) {
+    return human("internal_error", `triage failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function decide(input: TriageInput, deps: TriageDeps): Promise<TriageDecision> {
+  const c1 = await classifyStage(input, deps);
+  if (c1.kind === "drop_noise") return { kind: "drop_noise", classification: c1.classification };
+  if (c1.kind === "needs_human") return c1;
+  const c2 = await dedupeStage(input, c1, deps);
+  return { ...c2, classification: c1.classification };
 }
 
 async function memoryDecision(memory: Memory, projectId: string, text: string): Promise<{ decision?: TriageOutcome; snapshotId?: string }> {
@@ -121,22 +180,32 @@ async function memoryDecision(memory: Memory, projectId: string, text: string): 
   } catch (e) {
     return { decision: human("memory_error", `memory retrieval failed: ${e instanceof Error ? e.message : String(e)}`) };
   }
-  const notes = new Map(memory.list(projectId).map((n) => [n.id, n]));
+  const notes = new Map(memory.list(projectId).map((n) => [n.id, n])); // for the answer text; kind and tags come from the Hit
   for (const h of hits) { // best score first
     if (h.score < MEMORY_MATCH_MIN_SCORE) break;
-    const n = notes.get(h.noteId);
-    if (!n || (n.source.kind !== SOURCE_OPEN_TASK && n.source.kind !== SOURCE_KNOWN_ANSWER)) continue;
+    if (h.source.kind !== SOURCE_OPEN_TASK && h.source.kind !== SOURCE_KNOWN_ANSWER) continue;
     // Only gate-eligible notes (human-approved, trusted origin, unconflicted) may drive an automatic outcome.
     if (!h.eligibility.autoGate) {
       return { snapshotId, decision: human("unverified_memory_match", `possible match with note ${h.noteId} (${h.label}) is not gate-eligible; a person must confirm`) };
     }
-    if (n.source.kind === SOURCE_OPEN_TASK) return { snapshotId, decision: { kind: "duplicate", of: n.source.ref, noteId: n.id } };
-    return { snapshotId, decision: { kind: "known_answer", noteId: n.id, answer: n.summary || n.content.join(" ") } };
+    if (h.source.kind === SOURCE_OPEN_TASK) return { snapshotId, decision: { kind: "duplicate", of: h.source.ref, noteId: h.noteId } };
+    const n = notes.get(h.noteId);
+    return { snapshotId, decision: { kind: "known_answer", noteId: h.noteId, answer: h.summary || n?.content.join(" ") || h.content.join(" ") } };
   }
   return { snapshotId };
 }
 
-/** The FlowKit action name the `triage_decision` rule returns for a decision (see flows/triage.flow.yaml). */
+/** Action the `triage_decision` rule returns after stage 1 (stage `classify` in flows/triage.flow.yaml). */
+export function classifyAction(o: ClassifyOutcome): "dedupe" | "drop_noise" | "escalate" {
+  return o.kind === "proceed" ? "dedupe" : o.kind === "drop_noise" ? "drop_noise" : "escalate";
+}
+
+/** Action the `dedupe_decision` rule returns after stage 2 (stage `dedupe`). */
+export function dedupeAction(o: DedupeOutcome): "route" | "duplicate" | "known_answer" | "escalate" {
+  return o.kind === "needs_human" ? "escalate" : o.kind === "drop_noise" ? "escalate" : o.kind;
+}
+
+/** Whole-pipeline action for a composed `triage()` decision (both stages in one call). */
 export function flowAction(d: TriageDecision): "route" | "duplicate" | "known_answer" | "drop_noise" | "escalate" {
   return d.kind === "needs_human" ? "escalate" : d.kind;
 }

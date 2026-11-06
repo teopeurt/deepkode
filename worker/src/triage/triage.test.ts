@@ -196,18 +196,33 @@ describe("triage flow definition", () => {
   const flow = Bun.YAML.parse(readFileSync(join(dir, "triage.flow.yaml"), "utf8")) as any;
   const manifest = Bun.YAML.parse(readFileSync(join(dir, "triage.registries.yaml"), "utf8")) as any;
 
-  test("the auto-gate rule can only fire actions that the classify stage declares, and covers every outcome", () => {
-    const stageActions = Object.keys(flow.stages.classify.actions);
-    const rule = manifest.rules[flow.stages.classify.entry[0].decide];
-    expect(rule.actions.every((a: string) => stageActions.includes(a))).toBe(true);
-    for (const a of ["route", "duplicate", "known_answer", "drop_noise", "escalate"]) expect(rule.actions).toContain(a);
+  test("each rule can only fire actions its stage declares, and together they cover every outcome", () => {
+    const check = (stage: string, ruleRef: string, expected: string[]) => {
+      const actions = Object.keys(flow.stages[stage].actions);
+      const rule = manifest.rules[ruleRef];
+      expect(rule.actions.every((a: string) => actions.includes(a))).toBe(true);
+      for (const a of expected) expect(rule.actions).toContain(a);
+    };
+    expect(flow.stages.classify.entry[0].decide).toBe("triage_decision");
+    check("classify", "triage_decision", ["dedupe", "drop_noise", "escalate"]);
+    expect(flow.stages.dedupe.entry.map((e: any) => e.ref)).toEqual(["dedupe_search", "dedupe_decision"]);
+    check("dedupe", "dedupe_decision", ["route", "duplicate", "known_answer", "escalate"]);
+  });
+  test("dedupe is a visible stage between classify and create_task; classify no longer routes", () => {
+    expect(flow.stages.classify.actions.dedupe.to).toBe("dedupe");
+    expect(flow.stages.classify.actions.route).toBeUndefined();
+    expect(flow.stages.dedupe.actions.route.to).toBe("create_task");
+    expect(flow.stages.dedupe.actions.duplicate.to).toBe("merged");
+    expect(flow.stages.dedupe.actions.known_answer.to).toBe("answered");
   });
   test("needs_human is a human gate with a policy on every action, and the auto actions are system actions", () => {
     const nh = flow.stages.needs_human;
     expect(nh.pendingRole).toBe("triager");
     for (const a of Object.values(nh.actions) as any[]) expect(a).toMatchObject({ kind: "human", policy: "triager_can_decide" });
-    for (const a of ["route", "duplicate", "known_answer", "drop_noise", "escalate"]) expect(flow.stages.classify.actions[a].kind).toBe("system");
+    for (const a of ["dedupe", "drop_noise", "escalate"]) expect(flow.stages.classify.actions[a].kind).toBe("system");
+    for (const a of ["route", "duplicate", "known_answer", "escalate"]) expect(flow.stages.dedupe.actions[a].kind).toBe("system");
     expect(flow.stages.classify.actions.escalate.to).toBe("needs_human");
+    expect(flow.stages.dedupe.actions.escalate.to).toBe("needs_human");
     expect(flow.stages.classify.entry[0]).toMatchObject({ kind: "ai", gate: "auto" });
   });
 

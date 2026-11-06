@@ -41,6 +41,10 @@ export interface TriageInput {
   inputId: string;
   source: Input["channel"];
   externalId: string;
+  /** Normalised-content hash: also recorded as a workflow search attribute (Spec C 9). */
+  contentHash: string;
+  /** Original Message-ID (email), metadata only. */
+  messageId?: string;
   /** `intake:<source>:<externalId>` (§9): Temporal's workflow-id reuse policy dedupes repeats. */
   workflowId: string;
   author: { address: string; displayName: string };
@@ -62,7 +66,9 @@ export interface TriageInput {
 }
 
 export function intakeToTriageInput(input: Input): TriageInput {
-  const externalId = input.messageId ?? input.rawHash.slice(0, 32);
+  // Spec C 9 (v0.6): Message-ID is attacker-controlled for email (forged, or new on every re-send), so email derives
+  // its external id from the content hash. The Message-ID stays as metadata. Other channels keep their own id.
+  const externalId = input.channel === "email" ? input.contentHash : (input.messageId ?? input.rawHash.slice(0, 32));
   const reasons: string[] = [];
   if (input.origin !== "trusted") reasons.push(`untrusted origin: ${input.originReason}`);
   if (input.signals.length) reasons.push(`signals: ${input.signals.map((s) => s.code).join(", ")}`);
@@ -72,6 +78,8 @@ export function intakeToTriageInput(input: Input): TriageInput {
     inputId: input.id,
     source: input.channel,
     externalId,
+    contentHash: input.contentHash,
+    ...(input.messageId ? { messageId: input.messageId } : {}),
     workflowId: `intake:${input.channel}:${externalId}`,
     author: { address: input.sender.address, displayName: input.sender.displayName },
     receivedAt: input.receivedAt,

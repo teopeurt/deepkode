@@ -263,3 +263,15 @@ describe("U10 evaluation harness", () => {
     await expect(evaluateEmbedder(new HashEmbedder(), { notes: [], queries: [] })).rejects.toThrow();
   });
 });
+
+test("retrieval hits expose source and tags so callers need no second lookup", async () => {
+  const m = mkMemory();
+  const [r] = await m.capture(cap("p1", "task-1", "trusted", [{
+    title: "Checkout pay button unresponsive in Safari 17 in src/components/PayButton.tsx",
+    content: ["The pay button in `PayButton` ignores taps in Safari 17."], summary: "s", applicability: "pay button Safari", tags: ["checkout"],
+  }], { source: { kind: "open-task", ref: "task-1" } }));
+  if (r?.action !== "inserted") throw new Error("seed failed");
+  const { hits } = await m.retrieve("p1", "checkout pay button unresponsive in Safari", { stage: "triage" });
+  expect(hits[0]?.source).toEqual({ kind: "open-task", ref: "task-1" });
+  expect(hits[0]?.tags).toContain("checkout");
+});

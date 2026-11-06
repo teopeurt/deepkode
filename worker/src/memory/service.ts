@@ -299,7 +299,7 @@ export class InProcessMemory implements Memory {
         noteId: n.id, version: n.version, title: n.title, content: n.content, summary: n.summary,
         antiPatterns: n.antiPatterns, applicability: n.applicability, score,
         channelScores: { keyword: round(kw), semantic: round(sem) },
-        trust: n.trust, origin: n.origin, pinned: n.pinned, conflict,
+        trust: n.trust, origin: n.origin, pinned: n.pinned, conflict, source: { ...n.source }, tags: [...n.tags],
         eligibility: { stablePrefix: gate && n.pinned, autoGate: gate },
         label: `${n.trust}, ${n.origin} origin${conflict ? ", CONFLICTING" : ""}`,
       });

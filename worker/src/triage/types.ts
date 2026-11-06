@@ -18,6 +18,11 @@ export interface TriageInput {
   receivedAt?: string;
   subject?: string;
   body: string;
+  /**
+   * Optional bounded text used only to search memory (never given to a model as instructions). Intake supplies its
+   * neutralised summary, so the sanctioned data block's header lines do not dilute the match.
+   */
+  searchText?: string;
 }
 
 export const LABELS = ["bug", "crash", "feature", "question", "feedback", "noise", "security"] as const;
