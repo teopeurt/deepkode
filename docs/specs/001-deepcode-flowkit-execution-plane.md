@@ -216,7 +216,7 @@ roles:
   security:  { connection: anthropic, model: <fable>,  effort: high }   # U5: unverified
 ```
 
-The worker's `Role` type must include every role in this table (`adversary` and `copy` are missing from `worker/src/types.ts` at v0.4 and are a follow-up code change). Model ids are placeholders until U5 is confirmed. Dynamic selection (for example escalating the model after a failed Goal) is a worker rule using the task's retry count, not something FlowKit knows about.
+The worker's `Role` type must include every role in this table (added to `worker/src/types.ts` after v0.4). Model ids are placeholders until U5 is confirmed. Dynamic selection (for example escalating the model after a failed Goal) is a worker rule using the task's retry count, not something FlowKit knows about.
 
 ## 8. The first flow
 

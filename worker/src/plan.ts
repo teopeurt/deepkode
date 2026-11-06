@@ -3,10 +3,10 @@
 import type { Role } from "./types";
 
 /**
- * Roles a plan task may be assigned to. Spec §7 also names `adversary` and `copy`, which are not in the `Role`
- * type; `planner` and `adversary` are stage roles, not subagents, so they are rejected as task agents.
+ * Roles a plan task may be assigned to (Spec C §4.4, v0.4). `planner` and `adversary` are stage roles, not
+ * subagents, so they are rejected as task agents.
  */
-export const TASK_AGENT_ROLES: readonly string[] = ["coder", "tester", "reviewer", "security", "copy"] satisfies (Role | "copy")[];
+export const TASK_AGENT_ROLES: readonly Role[] = ["coder", "tester", "reviewer", "security", "copy"];
 
 export interface PlanTask { id: string; agent: string; input: Record<string, unknown>; dependsOn?: string[] }
 export interface Plan { tasks: PlanTask[] }

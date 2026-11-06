@@ -1,5 +1,5 @@
 // Types for the execution plane (Spec C §4). Unverified RPC shapes are marked S1-CONFIRM.
-export type Role = "planner" | "coder" | "tester" | "reviewer" | "security";
+export type Role = "planner" | "adversary" | "coder" | "tester" | "reviewer" | "security" | "copy";
 export type Access = "read-only" | "ask" | "full-access";
 
 export interface StartRequest {
