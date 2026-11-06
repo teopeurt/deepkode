@@ -1,6 +1,6 @@
 # Spec C: DeepCode as the execution plane for FlowKit (Option B)
 
-**Status:** DRAFT v0.2, awaiting approval. Nothing here is built. v0.2 adds the Input, Triage, Project, Task and Memory domain model (§2a, §9a, §9b); sections 1 to 13 otherwise keep their v0.1 meaning and the spike phases S0 to S4 are unchanged.
+**Status:** v0.3. v0.2 was approved; the S0 amendments below were approved on the basis of `001a-s0-findings.md`. Nothing is built beyond the S0 probes. v0.3 changes only §3, §4.1 to §4.4 and §6, plus D3, the S0 row, and §15; where an amendment is more precise than its wording in the findings, §15 says so.
 **Depends on:** Spec A (`gate: auto`) and Spec B (`orchestrate`), both implemented on the local, **unpushed** FlowKit branch `feat/auto-gated-ai-steps` (`51dcb7c`, `bbe959b`). FlowKit 1.1.0 is not published, so this work links to a local checkout until it is.
 **Replaces:** Helmsman's engine (`dsh/` plugins). Helmsman is retired, not fixed. Nothing has been deleted yet: that happens on this branch only after S0 gives a go.
 **Lives in:** `teopeurt/deepkode`, on branch `claude/deepcode-flowkit-execution-plane` (decision D6, made by the project owner). Specs A and B live with FlowKit, not here.
@@ -35,7 +35,7 @@ Run an autonomous, production-grade engineering workflow in which:
                                      │  plan / runSubagent /       │
                                      │  synthesize / recordTransition
                                      └──────────────┬──────────────┘
-                              JSON-RPC (target) or `deepcode exec` (spike)
+                              JSON-RPC over stdio (`deepcode-app-server`)
                                      ┌──────────────▼──────────────┐
                                      │ DeepCode service (Python)   │
                                      │  sessions, goals, sandbox,  │
@@ -86,7 +86,7 @@ A project lists its repositories, each with a remote, a default branch, and its 
 
 ## 3. What is verified, and what is not
 
-**Verified by reading the DeepCode source and docs (it was not run):**
+**Established by reading the DeepCode source and docs before S0.** S0 later ran DeepCode and confirmed the cases it exercised: the event shapes (item 1), exit codes 0 and 130 and the `--detach` output (item 2), SIGINT stopping a turn while a killed client does not (item 4), denial of unanswered approvals under `ask` (item 5), and the trust requirement (item 9). Not exercised: the exit-1 path for a failed turn, a retried `exec` creating a duplicate session (item 3; each `exec` call did start a new session), and items 6 to 8.
 
 1. `deepcode exec --json` emits one JSON event per line with `msg.type`, including `turn_started`, `tool_started`, `tool_completed`, `agent_message`, `error`, and `task_complete` (with `stop_reason`).
 2. `exec` exits 0 only if the turn completed, 1 otherwise, and 130 on interrupt. `--detach` returns `{threadId, turnId, status, detached}` and exits 0.
@@ -98,24 +98,34 @@ A project lists its repositories, each with a remote, a default branch, and its 
 8. Native subagents are model-driven, at most 5 concurrent, depth 1, isolated in worktrees by default, merged back with git's 3-way merge reporting conflicts. External `codex` and `claude-code` CLIs are available as subagent backends.
 9. A new workspace needs project trust (`--trust`, once per project).
 
-**Not verified (each is a spike question, §10):**
+**Answered in S0 by running DeepCode 2.3.1 against a scripted mock model** (full detail in `001a-s0-findings.md`; the mock tests transport and lifecycle, not model quality):
 
-- U1. That `turn/start`'s `messageId` is a true idempotency key (a repeated id returns the same turn rather than a second one).
-- U2. How an out-of-process client connects: the service's HTTP/WebSocket surface with the token file, or a stdio app-server per client. The P1 architecture doc describes stdio only; the service evidently has a network surface.
-- U3. Whether trust is per path, so every new git worktree needs a trust step, and how to do that non-interactively and safely.
-- U4. Whether a top-level turn can return schema-validated structured output. A forced `submit_result` capture tool exists for sub-agents; its exposure to `exec`/`turn/start` is unknown.
-- U5. Whether `claude-fable-5-1` and the other target models work through DeepCode's Anthropic provider, and whether native subagents can use a model other than their parent's (the code suggests they inherit it).
-- U6. The real behaviour of an unattended `ask`-mode turn that needs writes, and whether pre-approved rules can express "allow edits inside this worktree, deny network".
-- U7. Token and cost reporting per turn, for budgets and metrics.
-- U8. Behaviour when the DeepCode service restarts mid-turn (what state does the turn end in, and can the activity re-attach).
-- U9. Whether a DeepCode thread can use a multi-root workspace, or only one `workspacePath`. Assumed one until shown otherwise (§2a).
-- U10. Which embedding model gives acceptable retrieval on English and mixed content. Helmsman used `bge-small-zh-v1.5`, a Chinese model, so it is not carried over.
+| # | Question | S0 result |
+|---|---|---|
+| U1 | Is `messageId` a real idempotency key? | **Yes** (within one thread). A repeated id returns the same turn with one model call; the same id with different content is rejected. Whether the id is also unique across threads was not tested. |
+| U2 | How does an outside process connect? | **Stdio `deepcode-app-server`**: documented JSON-RPC 2.0, relays to the running service and shares its state. The service's HTTP `/control/rpc` also works but is internal and needs the token and identity proof. |
+| U3 | Is trust per path? | **Yes.** A new worktree is a separate, untrusted project; the worker trusts it with `project/add {trustState: "trusted"}`. Each worktree adds a project record; cleanup is open. |
+| U4 | Structured output from a top-level turn? | **No.** The capture tool is not exposed to `turn/start`. The worker validates JSON itself (§4.4). |
+| U5 | Anthropic and Fable models; per-subagent model? | **Still open: needs an API key.** Native subagents inherit the parent's model, so per-role models mean one thread per role. |
+| U6 | Unattended writes? | **Yes, for files, without a container.** Under `ask`, `security.permissions` with `write` and `edit` set to `allow` permitted writes inside the workspace and the workspace fence refused writes outside it. Tested with tool-level rules; path-pattern rules and bash `allow` patterns were not tested. |
+| U7 | Usage reporting? | **Yes.** `model_usage_recorded` events carry token counts. A new thread also makes one extra non-streamed model call. |
+| U8 | Restart mid-turn? | A killed **client** leaves the turn running; `turn/interrupt` stops it. A killed **service** leaves the turn `interrupted` with its history, not resumed. |
+| U9 | Multi-root workspaces? | **No**: one `workspacePath` per thread. |
+| U10 | Embedding model for English and mixed content | **Deferred to S6.** Helmsman's `bge-small-zh-v1.5` is Chinese-only and is not carried over. |
+
+**Behaviours the worker must handle (found in S0):**
+
+1. **Exit code and turn status do not prove the work happened.** A turn whose only tool call was denied still ends `completed` with exit 0.
+2. **Events carry no thread or turn id**; obtain ids from the RPC interface.
+3. **A dead client does not stop its turn.**
+4. **An interrupted turn is not a failed turn**; see §4.3.
+5. **The service starts itself on port 3081**, the port Helmsman's engine uses, so they cannot run together.
 
 ## 4. The activity contract
 
 ### 4.1 Transport
 
-Target: the JSON-RPC surface (idempotent `messageId`, `turn/interrupt`, `turn/read`, event replay). Spike: shell out to `deepcode exec --json --detach`/`loop`, then poll, because it is available today. The worker hides the transport behind one interface so the switch does not touch FlowKit.
+**Stdio `deepcode-app-server`** (U2): the worker starts one long-lived child process and speaks JSON-RPC 2.0, one JSON object per line. It supplies idempotent `turn/start` (`messageId`), `turn/interrupt`, `turn/read`, event replay, and approval-respond, and shares state with the DeepCode service. The worker hides this behind one interface so the transport can change without touching FlowKit. The `deepcode exec` command is not used by the worker; it remains useful for manual checks.
 
 ```ts
 interface ExecutionPlane {
@@ -128,23 +138,33 @@ interface ExecutionPlane {
 }
 ```
 
-### 4.2 Idempotency (a requirement, because `exec` has none)
+### 4.2 Idempotency
 
-The worker keeps a small store of `idempotencyKey -> { threadId, turnId }`, where the key is FlowKit's `[workflowId, entryEpoch, stepIndex, phase, taskId]`. On any activity attempt: look the key up first. If found, **re-attach** (`read`/`watch`) instead of starting. Only start when absent, and write the mapping *before* the first model call returns work. Result: an activity retried after a worker crash never creates a duplicate session. Execution activities use a small `maximumAttempts` (2 to 3) with a non-retryable error type for "turn finished and failed".
+`turn/start` is idempotent by `messageId` (U1). The worker sets **`messageId` to FlowKit's idempotency key** `[workflowId, entryEpoch, stepIndex, phase, taskId]` plus an attempt suffix only when a corrective or continuation message is deliberately sent (§4.3, §4.4). Because that guarantee holds per thread, the thread must be the same on every attempt:
 
-### 4.3 Cancellation
+- The worker sets the **thread title to the idempotency key** and keeps a small cache `key -> { threadId, turnId }`.
+- On an attempt: consult the cache; on a miss, list threads and match on title; only if neither finds one, `thread/start`. A crash between `thread/start` and the cache write is then repaired by the title lookup instead of creating a second thread. The cache is an optimisation; the title lookup is the source of truth.
+- A retried `turn/start` returns the existing turn; the activity then `watch`es or `read`s it instead of starting work again.
 
-A Temporal activity cancel (stage change, SLA escalation, human takeover) must stop the agent. The activity heartbeats on every event and, on cancellation, calls `interrupt` and waits for confirmation, then reports the task `cancelled`. If confirmation cannot be obtained, the worker marks the thread for cleanup and records an alert. It never assumes a killed client stopped the turn (verified fact 4).
+Execution activities use a small `maximumAttempts` (2 to 3) with a non-retryable error type for "turn finished and failed". S1 must confirm that thread listing by title is reliable at the expected scale and that `messageId` scoping does not collide across threads.
+
+### 4.3 Cancellation and recovery
+
+A Temporal activity cancel (stage change, SLA escalation, human takeover) must stop the agent. The activity heartbeats on every event and, on cancellation, calls **`turn/interrupt` and waits until the turn reads `interrupted`**, then reports the task `cancelled`. It never relies on killing a client or process: a dead client leaves its turn running (U8). If confirmation cannot be obtained, the worker records an alert and marks the thread for the cleanup path.
+
+An **`interrupted` turn is not a failure.** If the service crashed, a turn comes back `interrupted` with its history intact. A retried activity starts a new turn (new attempt suffix on the `messageId`) in the same thread and worktree, with a short continuation prompt, rather than restarting from scratch.
 
 ### 4.4 The three orchestration activities
 
 | FlowKit activity | DeepCode call | Access | Output |
 |---|---|---|---|
-| `planOrchestration` | One turn, planner role, read-only | `read-only` | Validated JSON `{ tasks: [{ id, agent, input }] }`. Invalid or unparsable JSON gets one corrective retry, then the activity fails (so the step degrades to a human). |
-| `runSubagent` | A Goal (`loop`) for `coder`/`tester`; a turn for read-only roles. Runs in the task's worktree. | per role, §6 | `{ output: summary, outputRef: <patch or report path> }`. Large artifacts stay on disk; workflow state keeps only the reference. |
+| `planOrchestration` | One turn, planner role, read-only | `read-only` | JSON `{ tasks: [{ id, agent, input }] }` **validated by the worker** (U4: there is no schema-constrained output for top-level turns). Invalid or unparsable JSON gets one corrective message in the same thread (new attempt suffix), then the activity fails, so the step degrades to a human. |
+| `runSubagent` | A Goal for `coder`/`tester` (RPC `goal/*`; the CLI `deepcode loop` is the equivalent); a turn for read-only roles. Runs in the task's worktree. | per role, §6 | `{ output: summary, outputRef: <patch or report path> }`. Large artifacts stay on disk; workflow state keeps only the reference. **Success is judged from evidence** (below). |
 | `synthesizeOrchestration` | One read-only turn, or a deterministic function when no judgement is needed | `read-only` | Merged output within `maxOutputBytes`. |
 
-Subagents that *change code* use `loop` with confirmed `--check` commands, so DeepCode itself refuses to call a task complete until the checks pass. A restart pauses the Goal, and the retried activity resumes it with `--resume`. This combines Temporal's durability with DeepCode's verified completion.
+Subagents that *change code* use a Goal with confirmed check commands, so DeepCode itself refuses to call a task complete until the checks pass. A restart pauses the Goal, and the retried activity resumes it. This combines Temporal's durability with DeepCode's verified completion. (Goals, their RPC methods and their restart behaviour were not exercised in S0; this is the first item of S1.)
+
+**Success criteria.** The turn status and exit code are not evidence (§3, behaviour 1): a turn whose writes were all denied still ends `completed`. A subagent task succeeds only if the evidence says so: the expected diff exists in the worktree and stays inside the task's scope, the confirmed checks passed, and, for a Goal, DeepCode recorded the Goal complete. Anything else is a failed task, whatever the turn status.
 
 ## 5. Workspaces and merging
 
@@ -161,11 +181,11 @@ Inputs from email and Slack are **untrusted text**. An agent that can edit files
 |---|---|---|---|
 | `plan` (planner) | read-only | Yes, via rule on schema validity and task count | Receives intake text as quoted data. |
 | `critique` (adversary) | read-only | Yes, only if the rule finds no blocking findings | The critique is a different role and ideally a different model from the planner. |
-| `execute` (coder, tester) | write inside its worktree only | Yes for low-risk classes; **human gate for any run whose source is an untrusted channel** until proven | Network off. No credentials in the environment. |
+| `execute` (coder, tester) | `ask` plus `allow` for `write`/`edit`, inside its worktree only | Yes for low-risk classes; **human gate for any run whose source is an untrusted channel** until proven | Network off. No credentials in the environment. |
 | `security` (pen-test) | read-only plus a throwaway environment | **No**, always human | |
 | `review` | human | n/a | |
 
-Open decision D3 is how unattended writes are permitted (U6): a pre-approved rule set, or `full-access` inside a disposable container or VM per task. I recommend the latter if U6 shows the rule set cannot express worktree-scoped writes.
+**Unattended writes (D3, resolved for files).** Run each task in its own trusted worktree under `ask`, with `security.permissions` setting `write` and `edit` to `allow`. S0 showed this permits edits inside the workspace while the workspace fence refuses paths outside it, so a container is not required for file edits. Shell commands (the confirmed checks) are still governed by the `ask` sandbox; whether they can run unattended through `allow` patterns, and whether the OS sandbox is available on the target host, is decided in S1. If either fails, fall back to a disposable container per task. Never use `full-access` for a task fed by an untrusted channel.
 
 Further controls: token budgets on every Goal; Temporal timeouts and the stage SLA bound the wall clock; a per-workflow cost ceiling checked by a guard; an allowlist of intake channels and authors; no outbound network from execute/security tasks except through an allowlisted gateway.
 
@@ -253,7 +273,7 @@ Memory is a service with a defined interface, taken from Helmsman's knowledge ba
 
 | Phase | Work | Exit criteria |
 |---|---|---|
-| S0 | Install Temporal dev server and DeepCode; link FlowKit locally; run `exec --json` on a toy repo; answer U1 to U8 | Written answers for U1 to U8 and a go/no-go on the transport |
+| S0 | Install Temporal dev server and DeepCode; link FlowKit locally; run DeepCode on a toy repo; answer U1 to U8 | **Complete** (2026-11-06): see `001a-s0-findings.md`. Verdict: go. Transport chosen; U5 still needs an API key. |
 | S1 | One `runSubagent`: worktree, trusted, `loop` with checks, idempotent re-attach, cancel via interrupt | Kill the worker mid-turn and restart: **zero duplicate sessions**; cancel stops the agent within a bounded time |
 | S2 | `orchestrate` with plan (validated JSON), 2 to 3 subagents, synthesize, auto gate; failure injection (bad plan, failed task, conflict) | Every injected failure ends in a human gate, never a silent release |
 | S3 | Full pipeline with critique and security stages, human approval, SLA escalation | A run completes end to end; an SLA timeout escalates and cancels cleanly |
@@ -275,7 +295,7 @@ Retired: `dsh/` plugins, the SQLite schema, the board projection. Kept as **desi
 |---|---|---|
 | D1 | Approve Option B and this spike as the next step | Yes, S0 first with go/no-go |
 | D2 | Worker language | TypeScript (FlowKit's native language) |
-| D3 | How unattended writes are permitted | Disposable container per task unless U6 shows scoped rules suffice |
+| D3 | How unattended writes are permitted | **Resolved for files:** `ask` plus `allow` rules in a trusted worktree. Shell/checks and sandbox availability are decided in S1, with a container fallback |
 | D4 | Should untrusted-channel runs always require a human before `execute` | Yes initially |
 | D5 | UI: Temporal UI plus DeepCode Web now, custom later | Yes |
 | D7 | Memory: a service interface with an in-process first implementation (recommended), or a separate process from the start | In-process behind the interface; split later |
@@ -299,3 +319,22 @@ Retired: `dsh/` plugins, the SQLite schema, the board projection. Kept as **desi
 | Memory: service with Helmsman's trust model, or DeepCode's files only? | A service with Helmsman's trust model (§9b). |
 | Does a Project span one repository or several? | Several (§2a). |
 | One triage flow or one per input type? | One shared flow (§9a). |
+
+## 15. Changes at v0.3 (S0 amendments)
+
+| # | Amendment | Where |
+|---|---|---|
+| 1 | Transport is stdio `deepcode-app-server` | §2 diagram, §4.1 |
+| 2 | Idempotency uses `turn/start` `messageId` set to FlowKit's key | §4.2 |
+| 3 | Cancellation is `turn/interrupt` and waits for `interrupted`; an interrupted turn is retried, not failed | §4.3 |
+| 4 | File edits need no container: `ask` plus `allow` for `write` and `edit` | §6, D3 |
+| 5 | The plan activity validates JSON in the worker, with one corrective retry | §4.4 |
+| 6 | Subagent success is judged from evidence, not turn status | §4.4 |
+| 7 | U1 to U4 and U6 to U9 marked answered; U5 open; U10 deferred to S6 | §3 |
+
+Two wordings in the findings were tightened here, because the evidence supports less than they said:
+
+- **Amendment 2** said `messageId` replaces the worker's mapping store as the primary mechanism. S0 proved `messageId` deduplicates turns **within one thread**, but `thread/start` is not idempotent: a retry after a crash could create a second thread, and the same `messageId` in a different thread would not be deduplicated. §4.2 therefore keeps a thread-level guard (title equals the key, looked up on a cache miss) and makes the store a cache of that.
+- **Amendment 4** said "path-scoped" allow rules. S0 tested tool-level `allow` for `write` and `edit` plus the workspace fence, not path-pattern rules. §3 and §6 say exactly that.
+
+Not changed: the findings' proposed S1 scope additions (Goals with checks and their restart behaviour, bash `allow` patterns, the sandbox on the target host, Anthropic and Fable connectivity, project-record cleanup, `messageId` scope across threads, thread listing by title) are recorded in `001a-s0-findings.md` §6 and in §3 and §4 above, but the S1 row of §10 is unchanged until you ask for it to be merged.
