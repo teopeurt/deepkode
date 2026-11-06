@@ -1,0 +1,11 @@
+# Registries manifest for triage.flow.yaml, used by `flowkit definitions validate --registries`.
+policies:
+  triager_can_decide: {}
+systemSteps:
+  normalize_input: {}
+  create_task: {}
+aiSteps:
+  classify_input: {}
+rules:
+  triage_decision:
+    actions: [route, duplicate, known_answer, drop_noise, escalate]
