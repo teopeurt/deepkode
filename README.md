@@ -11,6 +11,27 @@ Helmsman is a local-first, self-hosted coding-agent workspace: it turns "chattin
 Each task is its own session; when it finishes, its conclusions are captured into the project knowledge base automatically, and the next task is assembled with the relevant knowledge automatically ——
 **context isn't lost, and work isn't repeated**.
 
+> **Direction (in progress):** the Helmsman engine is planned to be retired in favour of a FlowKit/Temporal control plane driving
+> [DeepCode](https://github.com/HKUDS/DeepCode) as the execution plane (Input → Triage → Project → Task → Memory).
+> Nothing of that is built yet beyond the S0 probes. Start with [`docs/specs/001-deepcode-flowkit-execution-plane.md`](docs/specs/001-deepcode-flowkit-execution-plane.md)
+> (Spec C, v0.3) and [`docs/specs/001a-s0-findings.md`](docs/specs/001a-s0-findings.md). The sections below describe the current Helmsman code.
+
+## Spec C status
+
+| Phase | State | Where |
+|---|---|---|
+| S0: DeepCode viability (mock model) | Done, verdict GO | `docs/specs/001a-s0-findings.md`, `spikes/s0/` |
+| S1: one `runSubagent` with a real model and key | **Not run. Run it in your own environment** | Spec C §10, S1 row |
+| S2 to S6 | Not started | Spec C §10 |
+
+### Running S1 elsewhere
+
+S1 needs things this sandbox lacked: a real model API key (set it yourself, never commit it), a Temporal dev server, `git`, and ideally bubblewrap for the OS sandbox.
+S0 already shows how to drive DeepCode: see `spikes/s0/README.md` (same RPC probes, with a real provider in place of the mock).
+Exit criteria are in Spec C §10: zero duplicate threads or turns after killing the worker mid-turn, bounded cancellation, denied writes classed as failed, a failing Goal check not accepted, and a Goal paused by a service restart resumed by the retried activity.
+DeepCode's service claims port 3081, the same port as Helmsman's engine, so do not run both.
+FlowKit changes this depends on are on `teopeurt/flowkit`, branch `feat/auto-gated-ai-steps` (specs in its `docs/superpowers/specs/`).
+
 ## ✨ Highlights
 
 - **Tasks are sessions**: creating a card runs it automatically, managed on a board; one card can have multiple executions (fork a new generation)
