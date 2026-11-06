@@ -1,17 +1,38 @@
-# 🐳 Helmsman
+# deepkode
 
-<p align="center">
-  <img src="images/helmsman-wordmark.svg" width="360" alt="Helmsman" />
-</p>
+> An autonomous coding setup built as a durable workflow: **FlowKit/Temporal** as the control plane and
+> **[DeepCode](https://github.com/HKUDS/DeepCode)** as the execution plane.
+> Pipeline: Input → Triage → Project → Task → Memory. Every task gets a plan and an adversarial check before execution, and success is judged from evidence.
 
-> **A task-based AI workspace for solo developers** —— projects are the unit of isolation, tasks are the unit of execution,
-> comments are the control channel, and a per-project knowledge base is the persistent memory. You take the helm, the agent rows.
+The design lives in [`docs/specs/001-deepcode-flowkit-execution-plane.md`](docs/specs/001-deepcode-flowkit-execution-plane.md) (Spec C, v0.3),
+with S0 results in [`001a-s0-findings.md`](docs/specs/001a-s0-findings.md), the S1 runbook in [`001b-s1-runbook.md`](docs/specs/001b-s1-runbook.md),
+and the remaining work in [`002-remaining-work-plan.md`](docs/specs/002-remaining-work-plan.md).
+Nothing of the new path is built beyond the S0 probes and the `worker/` skeleton.
 
-Helmsman is a local-first, self-hosted coding-agent workspace: it turns "chatting with an agent" into "managing tasks".
-Each task is its own session; when it finishes, its conclusions are captured into the project knowledge base automatically, and the next task is assembled with the relevant knowledge automatically ——
-**context isn't lost, and work isn't repeated**.
+## Spec C status
 
-## ✨ Highlights
+| Phase | State | Where |
+|---|---|---|
+| S0: DeepCode viability (mock model) | Done, verdict GO | `docs/specs/001a-s0-findings.md`, `spikes/s0/` |
+| S1: one `runSubagent` with a real model and key | **Prepared, not run. Run it in your own environment** | Spec C §10, S1 row |
+| S2 to S6 | Not started | Spec C §10 |
+
+### Running S1 elsewhere
+
+S1 needs things this sandbox lacked: a real model API key (set it yourself, never commit it), a Temporal dev server, `git`, and ideally bubblewrap for the OS sandbox.
+The step-by-step runbook and findings template are in [`docs/specs/001b-s1-runbook.md`](docs/specs/001b-s1-runbook.md). The worker skeleton is in `worker/` (`cd worker && bun test`; the real `DeepCodePlane` has never run and has guessed RPC names marked S1-CONFIRM). S0 already shows how to drive DeepCode: see `spikes/s0/README.md` (same RPC probes, with a real provider in place of the mock).
+Exit criteria are in Spec C §10: zero duplicate threads or turns after killing the worker mid-turn, bounded cancellation, denied writes classed as failed, a failing Goal check not accepted, and a Goal paused by a service restart resumed by the retried activity.
+DeepCode's service claims port 3081, the same port as the legacy engine, so do not run both.
+FlowKit changes this depends on are on `teopeurt/flowkit`, branch `feat/auto-gated-ai-steps` (specs in its `docs/superpowers/specs/`).
+
+---
+
+# Legacy engine (being retired)
+
+The repository still contains the earlier task-based workspace: a local-first coding-agent workspace running as plugins inside the
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) engine, with a React frontend. Spec C §11 plans its retirement. The sections below describe that code as it stands.
+
+### Highlights
 
 - **Tasks are sessions**: creating a card runs it automatically, managed on a board; one card can have multiple executions (fork a new generation)
 - **Comments are control**: no interrupting pop-ups; every instruction/decision goes through the comment stream + the approval queue (a first-class surface)
@@ -22,7 +43,7 @@ Each task is its own session; when it finishes, its conclusions are captured int
 - **Context assembly**: new tasks automatically carry earlier conclusions (prefix partitioning → KV-cache hits, lower cost)
 - **Controlled experiments**: run the same task set twice, "with assembly vs bare", and use acceptance pass rate / cost data to answer "does assembly actually help"
 
-## 🚀 Quick start
+### Quick start
 
 ### Prerequisites
 
@@ -31,12 +52,12 @@ Each task is its own session; when it finishes, its conclusions are captured int
 
 ### Start
 
-Helmsman takes the **engine-plugin form** (the same shape as the official dsh web): all business logic runs as plugins inside the
+The legacy engine takes the **engine-plugin form** (the same shape as the official dsh web): all business logic runs as plugins inside the
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) engine process,
 and a single process serves the API + the live event stream. The frontend talks to the engine directly through the Vite proxy.
 
 ```bash
-# 1. Engine (dsh/) —— a single process containing all Helmsman business plugins
+# 1. Engine (dsh/) —— a single process containing all business plugins
 cd dsh && pnpm install
 node launcher.mjs cordis.yml                        # → http://127.0.0.1:3081
 
@@ -53,7 +74,7 @@ Open http://127.0.0.1:5173 in a browser → register a project directory → cre
 # Engine plugin chain validation (each plugin ships its own cordis composition for validation, see dsh/*.cordis.yml)
 ```
 
-## 🏗 Tech stack
+### Tech stack
 
 | Layer | Technology |
 |---|---|
@@ -61,12 +82,12 @@ Open http://127.0.0.1:5173 in a browser → register a project directory → cre
 | Engine plugins | JavaScript (ESM) · cordis composition · official dsh-host-webserver / dsh-agent-presets / dsh-user-approval |
 | Frontend | React 18 · Vite · zustand |
 
-## 📁 Layout
+### Layout
 
 ```
-dsh/         dsh engine composition + Helmsman business plugins (helmsman-api/tasks/board/approval/kb/worktree/model-select)
+dsh/         dsh engine composition + business plugins (api/tasks/board/approval/kb/worktree/model-select)
   ├─ cordis.yml            main composition (engine process = all services)
-  ├─ helmsman-*.js         business plugins (API / orchestration / projection / approvals / knowledge base / isolation / model switching)
+  ├─ <prefix>-*.js         business plugins (file names keep the original project prefix) (API / orchestration / projection / approvals / knowledge base / isolation / model switching)
   ├─ agent-presets/        task-level presets such as guard (tools/persona)
   └─ *.cordis.yml          standalone validation compositions for each plugin
 web/         React frontend (talks to the engine on 3081 directly through the Vite proxy)
@@ -75,7 +96,7 @@ web/         React frontend (talks to the engine on 3081 directly through the Vi
 
 For a walkthrough of how the pieces fit together, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## 🗺 Roadmap
+### Roadmap (legacy engine)
 
 - [x] P0: asset cards / approval queue / session drill-in / knowledge-base assembly / three-axis presets / controlled experiments
 - [x] P1 · requirement calibration flow (the AI proposes acceptance criteria; approval writes them back to the card)
@@ -113,10 +134,10 @@ For a walkthrough of how the pieces fit together, see [docs/ARCHITECTURE.md](doc
 
 **Design reference (2026-09): [WikiSkill](https://arxiv.org/abs/2608.27454) (Google, arXiv:2608.27454)** —— compiling agent experience into a persistent knowledge layer so skills get stronger with use (three layers: raw trajectories / a wiki of patterns + anti-patterns + applicability / skills as executable handbooks). The lightweight tier has landed: knowledge entries gain `anti_patterns` + `applicability`, distill extracts them automatically, they are injected along with hits at assembly time, and the frontend detail view shows them. Key open item: the executor should run an "internalized skill" rather than querying the wiki directly (open wiki access at inference time actually hurts generalization) —— which corresponds to a future "knowledge → project-level executable skill" layer.
 
-**In-house (2026-09): CWL structured context eviction (standalone plugin [`dsh-cwl`](https://github.com/kalifun/dsh-cwl), paradigm from [arXiv:2606.11213](https://arxiv.org/abs/2606.11213))** —— beyond summary compression: the trajectory is automatically derived into a typed episode graph (expl exploration / act actions + dependencies); an `agent/pre-step` waterfall checks the token budget before every LLM call, and above the threshold uses surface replace to **deterministically strip** the oldest completed act segments (zero LLM calls, no summary hallucination, causal structure preserved, user messages never evicted). This differs from the community's summary-based plugins (ACP); it ships `cwl_mark`/`cwl_recall` tools (active annotation + on-demand recall after eviction). The eviction mechanism is implemented and validated (two rounds of experiments: input -64%, steps -13%); the general capability is published as a standalone plugin and Helmsman consumes it as a dependency.
+**In-house (2026-09): CWL structured context eviction (standalone plugin [`dsh-cwl`](https://github.com/kalifun/dsh-cwl), paradigm from [arXiv:2606.11213](https://arxiv.org/abs/2606.11213))** —— beyond summary compression: the trajectory is automatically derived into a typed episode graph (expl exploration / act actions + dependencies); an `agent/pre-step` waterfall checks the token budget before every LLM call, and above the threshold uses surface replace to **deterministically strip** the oldest completed act segments (zero LLM calls, no summary hallucination, causal structure preserved, user messages never evicted). This differs from the community's summary-based plugins (ACP); it ships `cwl_mark`/`cwl_recall` tools (active annotation + on-demand recall after eviction). The eviction mechanism is implemented and validated (two rounds of experiments: input -64%, steps -13%); the general capability is published as a standalone plugin and the engine consumes it as a dependency.
 
 > Status baseline: verified against the code in 2026-08 (the README checkboxes are a snapshot; the repository is the source of truth for how interfaces/services evolve).
 
-## 📄 License
+## License
 
 MIT (the dsh engine is MIT, see [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness))
