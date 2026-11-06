@@ -21,13 +21,13 @@ Each task is its own session; when it finishes, its conclusions are captured int
 | Phase | State | Where |
 |---|---|---|
 | S0: DeepCode viability (mock model) | Done, verdict GO | `docs/specs/001a-s0-findings.md`, `spikes/s0/` |
-| S1: one `runSubagent` with a real model and key | **Not run. Run it in your own environment** | Spec C §10, S1 row |
+| S1: one `runSubagent` with a real model and key | **Prepared, not run. Run it in your own environment** | Spec C §10, S1 row |
 | S2 to S6 | Not started | Spec C §10 |
 
 ### Running S1 elsewhere
 
 S1 needs things this sandbox lacked: a real model API key (set it yourself, never commit it), a Temporal dev server, `git`, and ideally bubblewrap for the OS sandbox.
-S0 already shows how to drive DeepCode: see `spikes/s0/README.md` (same RPC probes, with a real provider in place of the mock).
+The step-by-step runbook and findings template are in [`docs/specs/001b-s1-runbook.md`](docs/specs/001b-s1-runbook.md). The worker skeleton is in `worker/` (`cd worker && bun test`; the real `DeepCodePlane` has never run and has guessed RPC names marked S1-CONFIRM). S0 already shows how to drive DeepCode: see `spikes/s0/README.md` (same RPC probes, with a real provider in place of the mock).
 Exit criteria are in Spec C §10: zero duplicate threads or turns after killing the worker mid-turn, bounded cancellation, denied writes classed as failed, a failing Goal check not accepted, and a Goal paused by a service restart resumed by the retried activity.
 DeepCode's service claims port 3081, the same port as Helmsman's engine, so do not run both.
 FlowKit changes this depends on are on `teopeurt/flowkit`, branch `feat/auto-gated-ai-steps` (specs in its `docs/superpowers/specs/`).
