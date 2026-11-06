@@ -1,0 +1,49 @@
+{
+  "_synthetic": "SYNTHETIC memory seed for the WP-D machinery tests. trustedApproved notes are captured as trusted, then approved by a human; the others stay unverified.",
+  "notes": [
+    {
+      "key": "dup-shop-coupon", "projectId": "shop", "kind": "open-task", "ref": "task-1042", "trustedApproved": true,
+      "title": "Checkout total shows wrong amount after applying coupon code COUPON_STACK in src/components/CartSummary.tsx",
+      "content": ["Applying two coupons at checkout makes the cart total in `CartSummary` ignore the second coupon discount.", "Tracked as task-1042; fix is in src/components/CartSummary.tsx and the order total endpoint."],
+      "applicability": "Customer reports that the checkout total is wrong after adding more than one coupon"
+    },
+    {
+      "key": "dup-shop-refund", "projectId": "shop", "kind": "open-task", "ref": "task-1077", "trustedApproved": true,
+      "title": "Refund endpoint POST /api/refunds returns 500 when the Stripe webhook arrives twice (missing idempotency key in src/routes/refunds.ts)",
+      "content": ["A duplicate Stripe webhook makes the refund endpoint throw PgError 23505 and return status 500.", "Tracked as task-1077; add an idempotency key check in src/routes/refunds.ts."],
+      "applicability": "Refund requests fail with a 500 from the refunds endpoint"
+    },
+    {
+      "key": "dup-atlas-dag", "projectId": "atlas", "kind": "open-task", "ref": "task-2210", "trustedApproved": true,
+      "title": "Nightly DAG daily_revenue_rollup fails with KeyError: 'region' in dags/revenue_rollup.py",
+      "content": ["The nightly Airflow DAG `daily_revenue_rollup` fails because the region column is missing from the upstream CSV.", "Tracked as task-2210; guard the pandas merge in dags/revenue_rollup.py."],
+      "applicability": "Nightly Atlas report or dashboard is stale because the daily_revenue_rollup DAG failed"
+    },
+    {
+      "key": "dup-pulse-push", "projectId": "pulse", "kind": "open-task", "ref": "task-3307", "trustedApproved": true,
+      "title": "Push notifications not delivered on Android 14 after FCM token refresh in PushRegistrar.kt",
+      "content": ["After an FCM token refresh `PushRegistrar` keeps the stale token, so Pulse push notifications are not delivered on Android 14.", "Tracked as task-3307; fix in PushRegistrar.kt."],
+      "applicability": "Users report that Pulse push notifications stopped arriving on Android"
+    },
+    {
+      "key": "faq-shop-invoice", "projectId": "shop", "kind": "known-answer", "ref": "faq-invoice-address", "trustedApproved": true,
+      "title": "FAQ: how to change the invoice address, Account > Billing > Addresses",
+      "content": ["Invoice addresses are edited under `Account > Billing > Addresses`.", "Past invoices cannot be changed; ask support to issue a credit note and a new invoice."],
+      "summary": "Edit the invoice address under Account > Billing > Addresses. Past invoices cannot be changed; support issues a credit note and a new invoice.",
+      "applicability": "Customer asks how to change the invoice address or billing address on an order"
+    },
+    {
+      "key": "faq-atlas-export", "projectId": "atlas", "kind": "known-answer", "ref": "faq-dashboard-csv", "trustedApproved": true,
+      "title": "FAQ: export an Atlas dashboard report to CSV with the Export button",
+      "content": ["Use the `Export` button on the Atlas dashboard report page and choose CSV; the limit is 100000 rows.", "For larger exports use the nightly csv export DAG in dags/export_csv.py."],
+      "summary": "Use the Export button on the dashboard report page and choose CSV (limit 100000 rows); larger exports use the nightly csv export DAG.",
+      "applicability": "User asks how to export a dashboard report to CSV"
+    },
+    {
+      "key": "unverified-shop-safari", "projectId": "shop", "kind": "open-task", "ref": "task-9001", "trustedApproved": false,
+      "title": "Checkout button unresponsive in Safari 17 in src/components/PayButton.tsx",
+      "content": ["The pay button in `PayButton` ignores taps in Safari 17 because of a passive touch listener.", "Reported by a customer email; not reviewed by a human."],
+      "applicability": "Checkout pay button does nothing in Safari"
+    }
+  ]
+}

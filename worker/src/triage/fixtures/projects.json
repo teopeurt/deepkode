@@ -1,0 +1,45 @@
+{
+  "_synthetic": "SYNTHETIC registry for the WP-D machinery tests. Replace with the real project registry.",
+  "projects": [
+    {
+      "id": "shop",
+      "name": "Shop",
+      "owners": ["alice@example.invalid"],
+      "routingHints": { "keywords": ["shop", "webshop", "order", "orders", "checkout", "cart", "payment", "invoice", "refund", "refunds", "coupon", "stripe"] },
+      "repos": [
+        {
+          "name": "shop-web", "path": "/repos/shop-web", "defaultBranch": "main", "remote": "git@example.invalid:acme/shop-web.git",
+          "hints": ["storefront", "src/components", ".tsx", "react", "css", "button", "page", "browser", "chrome", "safari", "firefox", "layout", "dark mode"] 
+        },
+        {
+          "name": "shop-api", "path": "/repos/shop-api", "defaultBranch": "main", "remote": "git@example.invalid:acme/shop-api.git",
+          "hints": ["api", "endpoint", "src/routes", "orderservice", "webhook", "500", "database", "postgres", "pgerror", "rate limit", "status code", "express", "json"]
+        }
+      ]
+    },
+    {
+      "id": "pulse",
+      "name": "Pulse",
+      "owners": ["bob@example.invalid"],
+      "routingHints": { "keywords": ["pulse", "pulse app", "push notification", "push notifications", "workout", "workouts", "streak"] },
+      "repos": [
+        {
+          "name": "pulse-mobile", "path": "/repos/pulse-mobile", "defaultBranch": "develop", "remote": "git@example.invalid:acme/pulse-mobile.git",
+          "hints": ["ios", "android", "iphone", "swift", ".swift", "kotlin", ".kt", "exc_bad_access", "nullpointerexception", "app store", "play store"]
+        }
+      ]
+    },
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "owners": ["carol@example.invalid"],
+      "routingHints": { "keywords": ["atlas", "pipeline", "etl", "data warehouse", "dashboard", "report", "reports"] },
+      "repos": [
+        {
+          "name": "atlas-pipeline", "path": "/repos/atlas-pipeline", "defaultBranch": "main", "remote": "git@example.invalid:acme/atlas-pipeline.git",
+          "hints": ["airflow", "dag", "dags/", "pandas", ".py", "python", "csv", "export", "nightly", "keyerror"]
+        }
+      ]
+    }
+  ]
+}
