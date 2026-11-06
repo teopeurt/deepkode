@@ -1,6 +1,6 @@
 # Spec C: DeepCode as the execution plane for FlowKit (Option B)
 
-**Status:** v0.3. v0.2 was approved; the S0 amendments below were approved on the basis of `001a-s0-findings.md`. Nothing is built beyond the S0 probes. v0.3 changes only §3, §4.1 to §4.4 and §6, plus D3, the S0 row, and §15; where an amendment is more precise than its wording in the findings, §15 says so.
+**Status:** v0.3. v0.2 was approved; the S0 amendments and the S1 scope were approved on the basis of `001a-s0-findings.md`. Nothing is built beyond the S0 probes. v0.3 changes only §3, §4.1 to §4.4, §6, §10 (S0 and S1 rows and the stop conditions), D3, and §15; where an amendment is more precise than its wording in the findings, §15 says so.
 **Depends on:** Spec A (`gate: auto`) and Spec B (`orchestrate`), both implemented on the local, **unpushed** FlowKit branch `feat/auto-gated-ai-steps` (`51dcb7c`, `bbe959b`). FlowKit 1.1.0 is not published, so this work links to a local checkout until it is.
 **Replaces:** Helmsman's engine (`dsh/` plugins). Helmsman is retired, not fixed. Nothing has been deleted yet: that happens on this branch only after S0 gives a go.
 **Lives in:** `teopeurt/deepkode`, on branch `claude/deepcode-flowkit-execution-plane` (decision D6, made by the project owner). Specs A and B live with FlowKit, not here.
@@ -274,7 +274,7 @@ Memory is a service with a defined interface, taken from Helmsman's knowledge ba
 | Phase | Work | Exit criteria |
 |---|---|---|
 | S0 | Install Temporal dev server and DeepCode; link FlowKit locally; run DeepCode on a toy repo; answer U1 to U8 | **Complete** (2026-11-06): see `001a-s0-findings.md`. Verdict: go. Transport chosen; U5 still needs an API key. |
-| S1 | One `runSubagent`: worktree, trusted, `loop` with checks, idempotent re-attach, cancel via interrupt | Kill the worker mid-turn and restart: **zero duplicate sessions**; cancel stops the agent within a bounded time |
+| S1 | One `runSubagent`, run with a **real model and API key**: worktree trusted via `project/add`; a Goal with confirmed checks (RPC `goal/*`) and its pause and resume after a service restart; title-guarded thread and `messageId` re-attach (§4.2); cancel via `turn/interrupt`. Also settle the S0 leftovers: shell `allow` patterns so the checks run unattended; OS sandbox availability on the target host; Anthropic, and Fable if offered, connectivity and a per-role model (U5); project-record cleanup after many worktrees; `messageId` scoping across threads; thread listing by title at scale | Kill the worker mid-turn and restart: **zero duplicate threads or turns**; cancel stops the agent within a bounded time; a turn whose writes were denied is classified **failed** (§4.4 evidence rule); a Goal with a failing check is not accepted; a Goal paused by a service restart is resumed by the retried activity; written answers for U5 and for unattended shell checks, with the container fallback chosen or ruled out |
 | S2 | `orchestrate` with plan (validated JSON), 2 to 3 subagents, synthesize, auto gate; failure injection (bad plan, failed task, conflict) | Every injected failure ends in a human gate, never a silent release |
 | S3 | Full pipeline with critique and security stages, human approval, SLA escalation | A run completes end to end; an SLA timeout escalates and cancels cleanly |
 | S4 | One real intake channel into the flow; dedupe; a prompt-injection test set | Duplicates collapse; injected instructions do not alter files outside the plan |
@@ -283,7 +283,7 @@ Memory is a service with a defined interface, taken from Helmsman's knowledge ba
 
 **Metrics recorded from S1:** success rate, human interventions per workflow, cost and tokens per workflow, wall-clock per stage, duplicates (must be 0), resume correctness after restarts of the worker, the DeepCode service, and Temporal.
 
-**Stop conditions:** if U1 and U3 both fail, or S1 cannot reach zero duplicates, stop and reconsider before building more.
+**Stop conditions:** if U1 and U3 both fail (they did not, S0), or S1 cannot reach zero duplicates, stop and reconsider before building more. If shell checks cannot run unattended under `ask` and a per-task container is not acceptable, stop and decide D3 again before S2.
 
 ## 11. Retiring Helmsman
 
@@ -337,4 +337,4 @@ Two wordings in the findings were tightened here, because the evidence supports 
 - **Amendment 2** said `messageId` replaces the worker's mapping store as the primary mechanism. S0 proved `messageId` deduplicates turns **within one thread**, but `thread/start` is not idempotent: a retry after a crash could create a second thread, and the same `messageId` in a different thread would not be deduplicated. §4.2 therefore keeps a thread-level guard (title equals the key, looked up on a cache miss) and makes the store a cache of that.
 - **Amendment 4** said "path-scoped" allow rules. S0 tested tool-level `allow` for `write` and `edit` plus the workspace fence, not path-pattern rules. §3 and §6 say exactly that.
 
-Not changed: the findings' proposed S1 scope additions (Goals with checks and their restart behaviour, bash `allow` patterns, the sandbox on the target host, Anthropic and Fable connectivity, project-record cleanup, `messageId` scope across threads, thread listing by title) are recorded in `001a-s0-findings.md` §6 and in §3 and §4 above, but the S1 row of §10 is unchanged until you ask for it to be merged.
+S1 scope (approved afterwards): the findings' proposed additions are merged into the S1 row of §10 with matching exit criteria and one added stop condition: Goals with confirmed checks and their restart behaviour, shell `allow` patterns, the sandbox on the target host, Anthropic and Fable connectivity (U5), project-record cleanup, `messageId` scoping across threads, and thread listing by title at scale. The S1 exit criteria still include zero duplicates and bounded cancellation, plus the evidence rule and Goal-resume checks.
