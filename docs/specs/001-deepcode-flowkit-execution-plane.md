@@ -1,6 +1,6 @@
 # Spec C: DeepCode as the execution plane for FlowKit (Option B)
 
-**Status:** v0.3. v0.2 was approved; the S0 amendments and the S1 scope were approved on the basis of `001a-s0-findings.md`. Nothing is built beyond the S0 probes. v0.3 changes only §3, §4.1 to §4.4, §6, §10 (S0 and S1 rows and the stop conditions), D3, and §15; where an amendment is more precise than its wording in the findings, §15 says so.
+**Status:** v0.4. v0.3 was approved. v0.4 records the decisions raised by work packages WP-B, WP-F and WP-G (see §16); it changes only §4.3, §4.4, §5, §7, D8, the S1 and S2 rows of §10, and §16. Implemented so far: S0 probes and the `worker/` skeleton (fake-plane tests only; no real DeepCode or model run).
 **Depends on:** Spec A (`gate: auto`) and Spec B (`orchestrate`), both implemented on the local, **unpushed** FlowKit branch `feat/auto-gated-ai-steps` (`51dcb7c`, `bbe959b`). FlowKit 1.1.0 is not published, so this work links to a local checkout until it is.
 **Replaces:** Helmsman's engine (`dsh/` plugins). Helmsman is retired, not fixed. Nothing has been deleted yet: that happens on this branch only after S0 gives a go.
 **Lives in:** `teopeurt/deepkode`, on branch `claude/deepcode-flowkit-execution-plane` (decision D6, made by the project owner). Specs A and B live with FlowKit, not here.
@@ -152,6 +152,10 @@ Execution activities use a small `maximumAttempts` (2 to 3) with a non-retryable
 
 A Temporal activity cancel (stage change, SLA escalation, human takeover) must stop the agent. The activity heartbeats on every event and, on cancellation, calls **`turn/interrupt` and waits until the turn reads `interrupted`**, then reports the task `cancelled`. It never relies on killing a client or process: a dead client leaves its turn running (U8). If confirmation cannot be obtained, the worker records an alert and marks the thread for the cleanup path.
 
+**Interrupt confirmation has a deadline.** `ExecutionPlane.interrupt` rejects with `InterruptUnconfirmed` after a configurable timeout (default 30 s). The activity then records an alert and marks the thread for the cleanup path, and still reports `cancelled`; it never reports success.
+
+**Temporal settings.** FlowKit's orchestrator registration must set, for the three activities: `maximumAttempts` 2 to 3; `nonRetryableErrorTypes` including `SubagentTurnFailed` and `PlanInvalid`; a `heartbeatTimeout`; and `cancellationType: WAIT_CANCELLATION_COMPLETED`. The activity sends a keepalive heartbeat (default every 3 s) in addition to per-event heartbeats, because Temporal delivers a cancel only on a heartbeat. A cancelled activity throws `CancelledFailure` after the interrupt is confirmed; FlowKit's `orchestrate` step must map it to task status `cancelled` (verified in S2, not assumed). A retried attempt re-attaches through the idempotent start and sends a continuation message only if `read` reports the previous turn `interrupted`; S1 must confirm that `turn/read` on a crashed turn does report `interrupted`.
+
 An **`interrupted` turn is not a failure.** If the service crashed, a turn comes back `interrupted` with its history intact. A retried activity starts a new turn (new attempt suffix on the `messageId`) in the same thread and worktree, with a short continuation prompt, rather than restarting from scratch.
 
 ### 4.4 The three orchestration activities
@@ -164,13 +168,22 @@ An **`interrupted` turn is not a failure.** If the service crashed, a turn comes
 
 Subagents that *change code* use a Goal with confirmed check commands, so DeepCode itself refuses to call a task complete until the checks pass. A restart pauses the Goal, and the retried activity resumes it. This combines Temporal's durability with DeepCode's verified completion. (Goals, their RPC methods and their restart behaviour were not exercised in S0; this is the first item of S1.)
 
+**Plan schema and critique rules (v0.4).** A plan is `{ tasks: [{ id, agent, input, dependsOn? }] }`:
+- `id` is unique; `agent` is one of `coder`, `tester`, `reviewer`, `security`, `copy` (`planner` and `adversary` are stage roles, never plan agents); `input` is an object that must contain `repo` (checked against the project's allowed repos by the critique pre-check, not by the plan validator); `dependsOn` is an optional list of task ids that must exist and be acyclic.
+- Limits: at most 20 tasks and 64 KB total, configurable per project.
+- Plan JSON is extracted from fenced or prose-wrapped replies; one failure gets one corrective message (attempt suffix `corrective1`), a second failure degrades to a human.
+- Critique pre-checks run before any model critique and are deterministic: task count, repo scope, `..`, NUL bytes and absolute or `~` paths in path-like fields, and untrusted origin (always a human gate, D4). A mention of `../` in free text also gates to a human; false positives are accepted.
+- The critique runs read-only, on a thread separate from the planner's, on a model different from the planner's unless the project sets `allowSameModel`. Only a well-formed critique with no blocking finding may auto-release; a malformed critique result is a human gate.
+
 **Success criteria.** The turn status and exit code are not evidence (§3, behaviour 1): a turn whose writes were all denied still ends `completed`. A subagent task succeeds only if the evidence says so: the expected diff exists in the worktree and stays inside the task's scope, the confirmed checks passed, and, for a Goal, DeepCode recorded the Goal complete. Anything else is a failed task, whatever the turn status.
 
 ## 5. Workspaces and merging
 
 - One `git worktree` per subagent task, created by the worker off a recorded base commit, named from `{workflowId}/{epoch}/{repo}/{taskId}` (no short random suffixes; `repo` because a project may span several).
+- Task, workflow and repo ids used in paths must be **generated** (not free text): path segments are sanitised, and two free-text ids can collide after sanitising. Worktrees are on branch `dk/{workflowId}/{epoch}/{repo}/{taskId}`; the recorded base commit is stored with the branch.
+- The worker commits with `--no-verify` under the identity `deepkode-worker <worker@deepkode.invalid>`.
 - Each task is trusted before use (U3). Trusting is a deliberate worker step, never an `--trust` on user-supplied paths.
-- On a successful task the worker commits in the worktree and merges to a per-workflow integration branch with a 3-way merge; **a conflict marks the task `failed` with reason `conflict`**, aborts the merge so nothing is left half-merged, and the plan/`decide` rule sees it. Nothing merges into the default branch without passing the `review` stage.
+- On a successful task the worker commits in the worktree and merges to a per-workflow integration branch with a 3-way merge; **a conflict marks the task `failed` with reason `conflict`**, aborts the merge so nothing is left half-merged, and the plan/`decide` rule sees it. In a multi-repo project each repo is judged on its own as `ready`, `failed` or `conflict`; all ready is `ready`, none ready is `failed`, and any mix is a **human gate** listing per-repo state (D8). Conflicts are detected by a dry run (`git merge-tree --write-tree`, git 2.38 or later) against the repo's *current* base, so a moved base shows up as a conflict. Nothing merges into the default branch without passing the `review` stage.
 - Cleanup (remove worktree, delete thread) runs from a separate cleanup path that survives cancellation.
 
 ## 6. Autonomy and security policy
@@ -203,7 +216,7 @@ roles:
   security:  { connection: anthropic, model: <fable>,  effort: high }   # U5: unverified
 ```
 
-Model ids are placeholders until U5 is confirmed. Dynamic selection (for example escalating the model after a failed Goal) is a worker rule using the task's retry count, not something FlowKit knows about.
+The worker's `Role` type must include every role in this table (`adversary` and `copy` are missing from `worker/src/types.ts` at v0.4 and are a follow-up code change). Model ids are placeholders until U5 is confirmed. Dynamic selection (for example escalating the model after a failed Goal) is a worker rule using the task's retry count, not something FlowKit knows about.
 
 ## 8. The first flow
 
@@ -274,8 +287,8 @@ Memory is a service with a defined interface, taken from Helmsman's knowledge ba
 | Phase | Work | Exit criteria |
 |---|---|---|
 | S0 | Install Temporal dev server and DeepCode; link FlowKit locally; run DeepCode on a toy repo; answer U1 to U8 | **Complete** (2026-11-06): see `001a-s0-findings.md`. Verdict: go. Transport chosen; U5 still needs an API key. |
-| S1 | One `runSubagent`, run with a **real model and API key**: worktree trusted via `project/add`; a Goal with confirmed checks (RPC `goal/*`) and its pause and resume after a service restart; title-guarded thread and `messageId` re-attach (§4.2); cancel via `turn/interrupt`. Also settle the S0 leftovers: shell `allow` patterns so the checks run unattended; OS sandbox availability on the target host; Anthropic, and Fable if offered, connectivity and a per-role model (U5); project-record cleanup after many worktrees; `messageId` scoping across threads; thread listing by title at scale | Kill the worker mid-turn and restart: **zero duplicate threads or turns**; cancel stops the agent within a bounded time; a turn whose writes were denied is classified **failed** (§4.4 evidence rule); a Goal with a failing check is not accepted; a Goal paused by a service restart is resumed by the retried activity; written answers for U5 and for unattended shell checks, with the container fallback chosen or ruled out |
-| S2 | `orchestrate` with plan (validated JSON), 2 to 3 subagents, synthesize, auto gate; failure injection (bad plan, failed task, conflict) | Every injected failure ends in a human gate, never a silent release |
+| S1 | One `runSubagent`, run with a **real model and API key**: worktree trusted via `project/add`; a Goal with confirmed checks (RPC `goal/*`) and its pause and resume after a service restart; title-guarded thread and `messageId` re-attach (§4.2); cancel via `turn/interrupt`. Also settle the S0 leftovers: shell `allow` patterns so the checks run unattended; OS sandbox availability on the target host; Anthropic, and Fable if offered, connectivity and a per-role model (U5); project-record cleanup after many worktrees; `messageId` scoping across threads; thread listing by title at scale | Kill the worker mid-turn and restart: **zero duplicate threads or turns**; cancel stops the agent within a bounded time; a turn whose writes were denied is classified **failed** (§4.4 evidence rule); a Goal with a failing check is not accepted; a Goal paused by a service restart is resumed by the retried activity; written answers for U5 and for unattended shell checks, with the container fallback chosen or ruled out; `turn/read` on a crashed turn reports `interrupted`; an unconfirmed interrupt raises the alert and cleanup path |
+| S2 | `orchestrate` with plan (validated JSON), 2 to 3 subagents, synthesize, auto gate; failure injection (bad plan, failed task, conflict) | Every injected failure ends in a human gate, never a silent release; FlowKit's real `orchestrate` types are asserted against the worker's activity types, and a cancelled activity maps to task status `cancelled`; the real per-repo integrate step (3-way merge, abort on conflict) exists |
 | S3 | Full pipeline with critique and security stages, human approval, SLA escalation | A run completes end to end; an SLA timeout escalates and cancels cleanly |
 | S4 | One real intake channel into the flow; dedupe; a prompt-injection test set | Duplicates collapse; injected instructions do not alter files outside the plan |
 | S5 | The shared triage flow (§9a) over two different input types, with a two-repository project; `needs_human` on low confidence | Both input types classify and route correctly on a labelled sample; a wrong or low-confidence case always reaches a human; a two-repo task produces per-repo worktrees and checks |
@@ -299,7 +312,7 @@ Retired: `dsh/` plugins, the SQLite schema, the board projection. Kept as **desi
 | D4 | Should untrusted-channel runs always require a human before `execute` | Yes initially |
 | D5 | UI: Temporal UI plus DeepCode Web now, custom later | Yes |
 | D7 | Memory: a service interface with an in-process first implementation (recommended), or a separate process from the start | In-process behind the interface; split later |
-| D8 | Multi-repo merge policy (§2a): all-or-nothing is not possible; stop at a human gate on partial failure | Approve as written |
+| D8 | Multi-repo merge policy (§2a): all-or-nothing is not possible; stop at a human gate on partial failure | **Resolved at v0.4:** all repos ready is ready; none ready is failed (no gate); any mix, including a conflict beside a success, is a human gate |
 | D6 | Where this spec and the worker live | **Decided:** `teopeurt/deepkode`, branch `claude/deepcode-flowkit-execution-plane`. FlowKit stays generic. |
 
 ## 13. Risks
@@ -338,3 +351,27 @@ Two wordings in the findings were tightened here, because the evidence supports 
 - **Amendment 4** said "path-scoped" allow rules. S0 tested tool-level `allow` for `write` and `edit` plus the workspace fence, not path-pattern rules. §3 and §6 say exactly that.
 
 S1 scope (approved afterwards): the findings' proposed additions are merged into the S1 row of §10 with matching exit criteria and one added stop condition: Goals with confirmed checks and their restart behaviour, shell `allow` patterns, the sandbox on the target host, Anthropic and Fable connectivity (U5), project-record cleanup, `messageId` scoping across threads, and thread listing by title at scale. The S1 exit criteria still include zero duplicates and bounded cancellation, plus the evidence rule and Goal-resume checks.
+
+## 16. Changes at v0.4 (decisions from WP-B, WP-F, WP-G)
+
+These record the resolutions applied on your instruction to apply the amendments. Each follows the behaviour the work package implemented and tested; change any you disagree with before S2.
+
+| From | Question | Resolution | Where |
+|---|---|---|---|
+| WP-F | Valid agent names | `coder, tester, reviewer, security, copy`; `planner`, `adversary` are stage roles | §4.4 |
+| WP-F | `adversary`, `copy` missing from `Role` | Role type must match §7; code follow-up | §7 |
+| WP-F | `input.repo` | Required, checked in critique pre-check | §4.4 |
+| WP-F | `dependsOn` | Optional, acyclic, ids must exist | §4.4 |
+| WP-F | Limits | 20 tasks, 64 KB, configurable | §4.4 |
+| WP-F | Stricter gating | Malformed critique and untrusted origin always gate | §4.4 |
+| WP-B | `turn/read` on crashed turn | Must report `interrupted`; confirmed in S1 | §4.3, §10 |
+| WP-B | Registration options | Non-retryable types, heartbeat timeout, wait-for-cancellation | §4.3 |
+| WP-B | Cancelled activity to task status | `orchestrate` maps it; checked in S2 | §4.3, §10 |
+| WP-B | Interrupt with no confirmation | Deadline, alert, cleanup path | §4.3 |
+| WP-G | Conflict representation | Failed with reason `conflict`, per-repo state, gate on a mix | §5 |
+| WP-G | Id collisions | Ids generated, not free text | §5 |
+| WP-G | All repos fail | `failed`, not a gate | §5, D8 |
+| WP-G | Conflict base | Current base ref | §5 |
+| WP-G | Commit identity | `--no-verify`, `deepkode-worker` identity | §5 |
+
+Not resolved here: the S1 results themselves, and the unwired items in the work packages (real `DeepCodePlane`, FlowKit type compatibility, the integrate step).
