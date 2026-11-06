@@ -1,6 +1,6 @@
 # Spec C: DeepCode as the execution plane for FlowKit (Option B)
 
-**Status:** v0.4. v0.3 was approved. v0.4 records the decisions raised by work packages WP-B, WP-F and WP-G (see §16); it changes only §4.3, §4.4, §5, §7, D8, the S1 and S2 rows of §10, and §16. Implemented so far: S0 probes and the `worker/` skeleton (fake-plane tests only; no real DeepCode or model run).
+**Status:** v0.5. v0.4 recorded the WP-B, WP-F and WP-G decisions; v0.5 records the WP-E (memory) decisions and changes only §9b, the S6 row of §10, and §17. Implemented so far: S0 probes and the `worker/` skeleton, activities, plan validation, workspaces and the memory service, all tested against fakes only (no real DeepCode, model or embedding run).
 **Depends on:** Spec A (`gate: auto`) and Spec B (`orchestrate`), both implemented on the local, **unpushed** FlowKit branch `feat/auto-gated-ai-steps` (`51dcb7c`, `bbe959b`). FlowKit 1.1.0 is not published, so this work links to a local checkout until it is.
 **Replaces:** Helmsman's engine (`dsh/` plugins). Helmsman is retired, not fixed. Nothing has been deleted yet: that happens on this branch only after S0 gives a go.
 **Lives in:** `teopeurt/deepkode`, on branch `claude/deepcode-flowkit-execution-plane` (decision D6, made by the project owner). Specs A and B live with FlowKit, not here.
@@ -260,7 +260,7 @@ Properties:
 
 Memory is a service with a defined interface, taken from Helmsman's knowledge base design (not its code, which had unwired parts: metrics were never saved, and two features were no-ops).
 
-**Note model:** `id`, `projectId`, optional `repoScope`, `title`, `content[]`, `tags`, `keywords`, `summary`, `antiPatterns[]`, `applicability`, `links`, `source { kind, ref }`, `validFrom`, `validUntil`, `invalidatedBy`, `version`, `trust`, `origin`, timestamps.
+**Note model:** `id`, `projectId`, optional `repoScope`, `title`, `content[]`, `tags`, `keywords`, `summary`, `antiPatterns[]`, `applicability`, `links`, `source { kind, ref }`, `validFrom`, `validUntil`, `invalidatedBy`, `invalidatedAt`, `version`, `trust`, `origin`, `approvedBy`, `pinned`, `conflictsWith[]`, `occurrences`, `provenance[]` (task id, repo), timestamps. Validity is bitemporal: valid time (`asOf`) and record time (`knownAt`).
 
 - `trust`: `human-approved`, `agent-generated`, `unverified`.
 - `origin`: `trusted` or `untrusted`, recording the channel the knowledge came from. This is new, and exists to stop poisoning.
@@ -269,10 +269,10 @@ Memory is a service with a defined interface, taken from Helmsman's knowledge ba
 
 | Operation | Behaviour |
 |---|---|
-| `capture(taskId)` | Run by a system step **after the `review` stage approves**, never earlier. Distills the finished task into notes. A task that began from an untrusted input yields notes with `origin: untrusted`. |
+| `capture({ taskId, taskOrigin, review, candidates })` | Run by a system step **after the `review` stage approves**, never earlier. The caller derives `taskOrigin` from the task record; **anything other than the exact value `trusted` is treated as untrusted** (fail closed). `candidates` are already-distilled notes (distillation is a separate step). Capture ignores any `trust`, `origin`, `pinned`, `approvedBy` or validity field a candidate supplies. Trusted tasks yield `agent-generated` notes with `origin: trusted`; untrusted tasks yield `unverified` notes with `origin: untrusted`. |
 | `retrieve(projectId, query, { repoScope, limit })` | Hybrid retrieval: keyword rules plus semantic similarity, filtered by validity window. |
 | `assemble(projectId, taskText)` | Returns the stable prefix, the relevant hits, and a snapshot id. The snapshot id is recorded on the task for audit. |
-| `invalidate`, `pin`, `unpin`, `list` | Maintenance. Only humans may mark a note `human-approved` or pin it into the stable prefix. |
+| `approve`, `invalidate`, `pin`, `unpin`, `list` | Maintenance. These require a human actor `{ kind: "human", id }`. **Approving a note whose origin is untrusted needs an explicit `acceptUntrustedOrigin`**: the act sets `origin` to `trusted`, records `approvedBy`, and re-screens the text. Pinning needs a `human-approved`, `origin: trusted` note. |
 
 **Rules:**
 
@@ -280,7 +280,12 @@ Memory is a service with a defined interface, taken from Helmsman's knowledge ba
 2. **Readers:** triage (`dedupe`, known answers), plan, critique, and the assembled prompt for execute. The first version injects memory by prompt assembly only. An on-demand memory tool for agents is deferred because it opens a second read path for injected content.
 3. **Writers:** only the `capture` step and human maintenance.
 4. **Validity is bitemporal:** an outdated note is invalidated, not deleted, so past tasks remain explainable from their snapshot.
-5. **Storage:** SQLite to start, behind the interface, so it can move to Postgres. The first implementation runs in the worker process behind the service interface and can be split out later (D7).
+5. **Stable prefix and gate eligibility.** The stable prefix holds only notes that are pinned, `human-approved`, `origin: trusted`, unconflicted and injection-free; pinning is the separate opt-in to the prefix. A note is **gate-eligible** (may feed an auto-gate decision) under the same rule without the pinning requirement. Every other hit is returned as a data block wrapped in `<untrusted-data>` with angle brackets neutralised, and never reaches the stable prefix or a gate decision.
+6. **Capture hygiene.** Specificity bar (a concrete anchor and a score of at least 3; generic phrasing is penalised), size limits, and text screening (NFKC normalisation, zero-width and bidi stripping, confusable folding, instruction-pattern detection) run before insert. Dedupe and merge run before insert, never across origin classes and never edit a `human-approved` note; contradictions are flagged as conflicts instead of merged. At most 100 untrusted notes per project and 5 per near-identical title.
+7. **Screening limits.** The text screen is regex-based and English-only. It is defence in depth, not the guarantee; the structural rules (origin, trust, human-only promotion) are the protection. Conflict detection is heuristic and misses contradictions phrased differently. Words mixing Latin, Cyrillic and Greek letters are rejected at capture; this rejects some legitimate multilingual notes, so it is revisited with U10's mixed-content results.
+8. **Snapshots.** Each `assemble` or `retrieve` produces an immutable snapshot id (a hash over project, query, stage, repo scope, embedder id, prefix, note versions and hits). Re-reading a snapshot returns the same hits after notes change. The task records the snapshot id (done by the integrator).
+9. **Tuning.** Dedupe thresholds (Jaccard 0.8, cosine 0.95), the 50/50 keyword and semantic weights and the 0.15 minimum score are starting values, calibrated with the U10 harness (`worker/src/memory/eval-cli.ts`) once a real embedder is chosen.
+10. **Storage:** SQLite to start, behind the interface, so it can move to Postgres. The first implementation runs in the worker process behind the service interface and can be split out later (D7).
 
 ## 10. Spike plan (time-boxed)
 
@@ -292,7 +297,7 @@ Memory is a service with a defined interface, taken from Helmsman's knowledge ba
 | S3 | Full pipeline with critique and security stages, human approval, SLA escalation | A run completes end to end; an SLA timeout escalates and cancels cleanly |
 | S4 | One real intake channel into the flow; dedupe; a prompt-injection test set | Duplicates collapse; injected instructions do not alter files outside the plan |
 | S5 | The shared triage flow (§9a) over two different input types, with a two-repository project; `needs_human` on low confidence | Both input types classify and route correctly on a labelled sample; a wrong or low-confidence case always reaches a human; a two-repo task produces per-repo worktrees and checks |
-| S6 | Memory (§9b): capture after review, retrieval at triage and plan, snapshot id on the task; a memory-poisoning test set | A repeated issue is recognised from memory; untrusted-origin notes never reach the stable prefix or an auto-gate; the embedding choice (U10) is made on measured retrieval quality |
+| S6 | Memory (§9b): capture after review, retrieval at triage and plan, snapshot id on the task; a memory-poisoning test set | A repeated issue is recognised from memory; untrusted-origin notes never reach the stable prefix or an auto-gate; the embedding choice (U10) is made on measured retrieval quality (the harness and a 31-case poisoning set exist; the measurement with a real embedder, a distillation step that produces candidates, file-backed SQLite reopened across processes, and the task-record wiring remain) |
 
 **Metrics recorded from S1:** success rate, human interventions per workflow, cost and tokens per workflow, wall-clock per stage, duplicates (must be 0), resume correctness after restarts of the worker, the DeepCode service, and Temporal.
 
@@ -375,3 +380,19 @@ These record the resolutions applied on your instruction to apply the amendments
 | WP-G | Commit identity | `--no-verify`, `deepkode-worker` identity | §5 |
 
 Not resolved here: the S1 results themselves, and the unwired items in the work packages (real `DeepCodePlane`, FlowKit type compatibility, the integrate step).
+
+## 17. Changes at v0.5 (decisions from WP-E)
+
+Applied on your instruction, following the behaviour WP-E implemented and tested. Change any you disagree with before S6.
+
+| # | Question | Resolution | Where |
+|---|---|---|---|
+| 1 | Does human approval clear an untrusted origin? | Only with explicit `acceptUntrustedOrigin`; sets origin trusted, records `approvedBy`, re-screens | §9b ops |
+| 2 | Note fields beyond the original model | `approvedBy`, `conflictsWith`, `occurrences`, `provenance[]`, `pinned`, `invalidatedAt` added | §9b model |
+| 3 | `capture(taskId)` signature | Takes `taskOrigin`, review verdict, candidates; only exact `trusted` is trusted | §9b ops |
+| 4 | Pin vs approve | Pin is the separate opt-in to the stable prefix; gate eligibility needs no pin | §9b rule 5 |
+| 5 | Injection screening limits | Defence in depth only; structure is the protection | §9b rule 7 |
+| 6 | Mixed-script words | Rejected at capture; revisited with U10 | §9b rule 7 |
+| 7 | Untuned thresholds | Starting values, calibrated with the U10 harness | §9b rule 9 |
+
+Still open: U10 (measured with a real embedder), distillation of finished tasks into candidates, file-backed persistence tests, concurrency, and recording the snapshot id on the task.
